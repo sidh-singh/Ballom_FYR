@@ -1,0 +1,38 @@
+{
+    "indices" : [
+        {
+            "symbol" : "NIFTY",
+            "indices": "NSE:NIFTY50-INDEX",
+            "qty_times" : 1
+        }
+    ],
+    "commodities" : [
+        {
+            "symbol" : "SILVERM",
+            "commodity": "SILVER",
+            "qty_times" : 1,
+            "enabled": true
+        },
+        {
+            "symbol" : "GOLDM",
+            "commodity": "GOLD",
+            "qty_times" : 1,
+            "enabled": true
+        },
+        {
+            "symbol" : "NATURALGAS",
+            "commodity": "NATURALGAS",
+            "qty_times" : 1,
+            "enabled": true
+        },
+        {
+            "symbol" : "CRUDEOIL",
+            "commodity": "CRUDEOIL",
+            "qty_times" : 1,
+            "enabled": true
+        }
+    ],
+    "max_active_commodities": 1,
+    "max_balance_usage": 100000,
+    "brake" : 0
+}

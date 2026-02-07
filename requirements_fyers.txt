@@ -1,0 +1,8 @@
+pandas==2.2.0
+numpy
+fyers-apiv3==3.1.7
+dacite==1.9.2
+multiprocess==0.70.18
+beautifulsoup4==4.14.2
+pyotp==2.9.0
+scipy==1.16.3
