@@ -19,7 +19,14 @@ no print/log statements.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from constants import Transaction
+from constants import (
+    Transaction,
+    STRATEGY_HEDGE,
+    STRATEGY_FACTOR,
+    STRATEGY_TIMES,
+    STRATEGY_PRODUCT_TYPE,
+    FIBO_SEQUENCE_LENGTH,
+)
 from state_writer import log_strategy_event
 
 
@@ -54,15 +61,16 @@ class HeikenAshiMartingale:
     them via the Fyers object.
     """
 
-    # ── tunable parameters ─────────────────────────────────────────────────────
-    HEDGE           = 100     # Profit target (₹) for closing positions
-    FACTOR          = 1.4     # Exponent for fibonacci loss threshold
-    TIMES           = 1       # Base multiplier for fibonacci sizing
-    PRODUCT_TYPE    = "MARGIN"
+    # ── tunable parameters (from constants.py) ────────────────────────────────
+    HEDGE           = STRATEGY_HEDGE
+    FACTOR          = STRATEGY_FACTOR
+    TIMES           = STRATEGY_TIMES
+    PRODUCT_TYPE    = STRATEGY_PRODUCT_TYPE
 
-    def __init__(self, mode: str = "demo", brake: bool = False) -> None:
+    def __init__(self, mode: str = "demo", brake: bool = False, max_balance_usage: float = 0) -> None:
         self.mode = mode
         self.brake = brake
+        self.max_balance_usage = max_balance_usage
 
     # ── fibonacci helpers ──────────────────────────────────────────────────────
 
@@ -75,7 +83,7 @@ class HeikenAshiMartingale:
     @classmethod
     def _fibo_threshold(cls, position_count: int) -> float:
         """Loss threshold = fib(position_count) ^ factor × times."""
-        fib = [cls._recur_fibo(i) for i in range(25)][2:]
+        fib = [cls._recur_fibo(i) for i in range(FIBO_SEQUENCE_LENGTH)][2:]
         try:
             return (fib[position_count] * cls.TIMES) ** cls.FACTOR
         except (ValueError, IndexError):
@@ -90,7 +98,7 @@ class HeikenAshiMartingale:
         if current_qty <= 0 or lot_size <= 0:
             return lot_size
         current_lots = abs(current_qty) // lot_size
-        fib = [cls._recur_fibo(i) for i in range(25)][2:]
+        fib = [cls._recur_fibo(i) for i in range(FIBO_SEQUENCE_LENGTH)][2:]
         try:
             idx = fib.index(current_lots) + 1
             next_lots = fib[idx] if idx < len(fib) else fib[-1]
@@ -305,7 +313,69 @@ class HeikenAshiMartingale:
         return ce_action, pe_action
 
     # ══════════════════════════════════════════════════════════════════════════
+    #  BALANCE LIMIT HELPERS  (ported from app_fyers_strategy)
+    # ══════════════════════════════════════════════════════════════════════════
+
+    @staticmethod
+    def _get_utilized_balance(fyers) -> tuple:
+        """
+        Fetch current utilized balance from Fyers API.
+        Returns: (utilized_equity, utilized_commodity, total_utilized)
+        """
+        try:
+            funds_response = fyers.funds()
+            fund_limit = funds_response.get("fund_limit", [])
+
+            utilized_equity = 0
+            utilized_commodity = 0
+
+            for item in fund_limit:
+                title = item.get("title", "").lower()
+                if "utilized" in title or "used" in title or item.get("id") == 2:
+                    utilized_equity += abs(item.get("equityAmount", 0))
+                    utilized_commodity += abs(item.get("commodityAmount", 0))
+
+            return utilized_equity, utilized_commodity, utilized_equity + utilized_commodity
+        except Exception:
+            return 0, 0, 0
+
+    def _check_balance_limit(self, fyers, order_type: Transaction) -> tuple:
+        """
+        Check if balance usage limit will be exceeded.
+        Returns: (can_trade: bool, utilized_amount: float)
+
+        Only blocks new entry/martingale orders (BUY, SELL, BUY_WITH_SPECIFIC_VOLUME,
+        SELL_WITH_SPECIFIC_VOLUME).  Exit orders (CLOSE_BUY, CLOSE_SELL) always pass.
+        """
+        # No limit configured → allow everything
+        if self.max_balance_usage <= 0:
+            return True, 0
+
+        # Exit orders are never blocked
+        exit_types = (
+            Transaction.CLOSE, Transaction.CLOSE_BUY, Transaction.CLOSE_SELL,
+            Transaction.DO_NOTHING, Transaction.RESET,
+        )
+        if order_type in exit_types:
+            return True, 0
+
+        _, _, total_utilized = self._get_utilized_balance(fyers)
+
+        if total_utilized >= self.max_balance_usage:
+            log_strategy_event(
+                "BALANCE", "CHECK", "LIMIT_EXHAUSTED",
+                details=f"Utilized ₹{total_utilized:,.2f} >= Limit ₹{self.max_balance_usage:,.2f}",
+            )
+            return False, total_utilized
+
+        return True, total_utilized
+
+    # ══════════════════════════════════════════════════════════════════════════
     #  EXECUTE ORDERS — side-effect: calls fyers.buy() / fyers.sell()
+    #
+    #  Balance-limit and fibonacci qty escalation (from app_fyers_strategy)
+    #  are enforced here so that every MARTINGALE_BUY/SELL increases
+    #  quantity along the fibonacci series.
     # ══════════════════════════════════════════════════════════════════════════
 
     def execute_orders(self, fyers, ce_action: OrderAction, pe_action: OrderAction) -> None:
@@ -314,12 +384,16 @@ class HeikenAshiMartingale:
 
         In demo mode, DemoFyers handles paper trading internally —
         orders are sent to fyers.buy()/sell() regardless of mode.
+
+        Balance-limit checks block new entries when utilized margin
+        exceeds max_balance_usage.  Fibonacci qty escalation is
+        already computed in evaluate() and stored in martingale_qty.
         """
         self._execute_single(fyers, ce_action, "CE")
         self._execute_single(fyers, pe_action, "PE")
 
     def _execute_single(self, fyers, action: OrderAction, label: str) -> None:
-        """Execute a single leg's order action."""
+        """Execute a single leg's order action with balance-limit enforcement."""
         s = action.status
         sym = action.symbol
 
@@ -331,6 +405,21 @@ class HeikenAshiMartingale:
             log_strategy_event(sym, label, "BRAKE_BLOCKED",
                                details=f"{s.name} blocked — brake is ON")
             return
+
+        # ── balance-limit guard for entry / martingale orders ──────────────
+        entry_types = (
+            Transaction.BUY, Transaction.SELL,
+            Transaction.BUY_WITH_SPECIFIC_VOLUME,
+            Transaction.SELL_WITH_SPECIFIC_VOLUME,
+        )
+        if s in entry_types:
+            can_trade, utilized = self._check_balance_limit(fyers, s)
+            if not can_trade:
+                log_strategy_event(
+                    sym, label, "BALANCE_BLOCKED",
+                    details=f"{s.name} blocked — utilized ₹{utilized:,.2f} >= limit ₹{self.max_balance_usage:,.2f}",
+                )
+                return
 
         # ── BUY ────────────────────────────────────────────────────────────
         if s == Transaction.BUY:
@@ -357,16 +446,22 @@ class HeikenAshiMartingale:
                                qty=action.qty, pl=action.pl, details=str(resp))
 
         # ── BUY_WITH_SPECIFIC_VOLUME (martingale add long) ────────────────
+        #    qty increases along the fibonacci series (computed by evaluate)
         elif s == Transaction.BUY_WITH_SPECIFIC_VOLUME:
-            resp = fyers.buy(sym, action.martingale_qty)
+            fibo_qty = action.martingale_qty
+            resp = fyers.buy(sym, fibo_qty)
             log_strategy_event(sym, label, "MARTINGALE_BUY_EXECUTED",
-                               qty=action.martingale_qty, details=str(resp))
+                               qty=fibo_qty,
+                               details=f"fibo_qty={fibo_qty} | {str(resp)}")
 
         # ── SELL_WITH_SPECIFIC_VOLUME (martingale add short) ──────────────
+        #    qty increases along the fibonacci series (computed by evaluate)
         elif s == Transaction.SELL_WITH_SPECIFIC_VOLUME:
-            resp = fyers.sell(sym, action.martingale_qty)
+            fibo_qty = action.martingale_qty
+            resp = fyers.sell(sym, fibo_qty)
             log_strategy_event(sym, label, "MARTINGALE_SELL_EXECUTED",
-                               qty=action.martingale_qty, details=str(resp))
+                               qty=fibo_qty,
+                               details=f"fibo_qty={fibo_qty} | {str(resp)}")
 
         else:
             log_strategy_event(sym, label, "UNHANDLED",

@@ -36,35 +36,29 @@ from fyers import Fyers
 from demo_fyers import DemoFyers
 from indicator import SmoothedHeikenAshi
 from strategy import HeikenAshiMartingale
-from constants import Transaction
+from constants import (
+    Transaction,
+    SYMBOLS_JSON,
+    OPTION_PAIRS_JSON,
+    COMMODITY_PAIRS_JSON,
+    INDICES_START,
+    INDICES_END,
+    COMMODITY_START,
+    COMMODITY_END,
+    SHA_LENGTH,
+    SHA_MA_TYPE,
+    DEFAULT_TIMEFRAME,
+    DEFAULT_CANDLES,
+    INNER_LOOP_INTERVAL,
+)
 from state_writer import (
+    configure as configure_state_writer,
     write_app_status,
     write_signal_state,
     write_position_state,
     write_account_state,
     log_strategy_event,
 )
-
-# ── Config ─────────────────────────────────────────────────────────────────────
-SYMBOLS_JSON = Path(__file__).resolve().parent / "symbols.json"
-OPTION_PAIRS_JSON = Path("C:/Ballom_FYR/option_pairs.json")
-COMMODITY_PAIRS_JSON = Path("C:/Ballom_FYR/commodity_pairs.json")
-
-# Trading time windows
-INDICES_START   = dt_time(9, 15)
-INDICES_END     = dt_time(15, 30)
-COMMODITY_START = dt_time(9, 15)
-COMMODITY_END   = dt_time(23, 55)
-
-# SHA indicator parameters (same as FyersHeikenAshiMartingale)
-SHA_LENGTH = 9
-SHA_MA_TYPE = "RMA"
-# Default timeframe for historical data
-DEFAULT_TIMEFRAME = "15"
-DEFAULT_CANDLES = 100
-
-# Inner loop timing
-INNER_LOOP_INTERVAL = 15   # seconds between each strategy evaluation cycle
 
 
 def load_symbols_config() -> dict:
@@ -504,12 +498,21 @@ def inner_loop(
 
 def main():
     mode = (sys.argv[1] if len(sys.argv) > 1 else "demo").lower()
-    brake = load_symbols_config().get("brake", 0)
 
-    fyers = DemoFyers() if mode == "demo" else Fyers()
-    strategy = HeikenAshiMartingale(mode=mode, brake=bool(brake))
+    # Configure state writer to use mode-specific directory
+    # (C:/Ballom_FYR/state/demo/ or C:/Ballom_FYR/state/live/)
+    configure_state_writer(mode)
 
     config = load_symbols_config()
+    brake = config.get("brake", 0)
+
+    fyers = DemoFyers() if mode == "demo" else Fyers()
+    strategy = HeikenAshiMartingale(
+        mode=mode,
+        brake=bool(brake),
+        max_balance_usage=config.get("max_balance_usage", 0),
+    )
+
     indices     = config.get("indices", [])
     commodities = config.get("commodities", [])
 

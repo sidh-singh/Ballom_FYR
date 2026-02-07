@@ -1,9 +1,13 @@
 """
 state_writer.py — Atomic JSON state-file management for the dashboard.
 
-All state files live under  C:/Ballom_FYR/state/  and are written
+All state files live under  C:/Ballom_FYR/state/<mode>/  and are written
 atomically (temp + rename) so the Dash dashboard never reads a
 half-written file.
+
+Call ``configure(mode)`` once at startup (in app.py) before any writes.
+Demo and live modes write to separate directories so switching modes
+never corrupts or mixes state.
 
 State files
 ───────────
@@ -23,18 +27,45 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-# ── root directory ─────────────────────────────────────────────────────────────
-STATE_DIR = Path("C:/Ballom_FYR/state")
+from constants import STATE_DIR_DEMO, get_state_dir
 
-# ── individual state files ─────────────────────────────────────────────────────
-APP_STATUS_FILE     = STATE_DIR / "app_status.json"
-SIGNAL_STATE_FILE   = STATE_DIR / "signal_state.json"
-POSITION_STATE_FILE = STATE_DIR / "position_state.json"
-ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"
-STRATEGY_LOG_FILE   = STATE_DIR / "strategy_log.json"
+# ── module-level state (set via configure) ─────────────────────────────────────
+_mode: str = "demo"
+STATE_DIR: Path = STATE_DIR_DEMO
+
+APP_STATUS_FILE: Path     = STATE_DIR / "app_status.json"
+SIGNAL_STATE_FILE: Path   = STATE_DIR / "signal_state.json"
+POSITION_STATE_FILE: Path = STATE_DIR / "position_state.json"
+ACCOUNT_STATE_FILE: Path  = STATE_DIR / "account_state.json"
+STRATEGY_LOG_FILE: Path   = STATE_DIR / "strategy_log.json"
 
 # Maximum strategy-log entries kept (FIFO)
 _MAX_LOG_ENTRIES = 200
+
+
+def configure(mode: str) -> None:
+    """
+    Set the active mode ('demo' or 'live') — must be called once at startup.
+    All subsequent writes go to the mode-specific state directory.
+    """
+    global _mode, STATE_DIR
+    global APP_STATUS_FILE, SIGNAL_STATE_FILE, POSITION_STATE_FILE
+    global ACCOUNT_STATE_FILE, STRATEGY_LOG_FILE
+
+    _mode = mode.lower()
+    STATE_DIR = get_state_dir(_mode)
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
+
+    APP_STATUS_FILE     = STATE_DIR / "app_status.json"
+    SIGNAL_STATE_FILE   = STATE_DIR / "signal_state.json"
+    POSITION_STATE_FILE = STATE_DIR / "position_state.json"
+    ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"
+    STRATEGY_LOG_FILE   = STATE_DIR / "strategy_log.json"
+
+
+def get_current_mode() -> str:
+    """Return the currently configured mode."""
+    return _mode
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

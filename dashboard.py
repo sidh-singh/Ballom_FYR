@@ -1,15 +1,17 @@
 """
 dashboard.py — Live Dash / Plotly dashboard for Ballom_FYR.
 
-Reads JSON state files from C:/Ballom_FYR/state/ and displays:
+Reads JSON state files from C:/Ballom_FYR/state/<mode>/ and displays:
   • Account balance, realized / unrealized P&L
   • Open positions table
   • SHA signal strength, power, list, crossover per symbol
   • Strategy decision log (rolling)
 
 Launch:
-    python dashboard.py          → http://127.0.0.1:8050
-    python dashboard.py 8060     → http://127.0.0.1:8060
+    python dashboard.py               → auto-detect mode, http://127.0.0.1:8050
+    python dashboard.py demo          → force demo mode
+    python dashboard.py live          → force live mode
+    python dashboard.py demo 8060     → demo mode on port 8060
 """
 
 from __future__ import annotations
@@ -23,13 +25,60 @@ from dash import dcc, html, dash_table
 from dash.dependencies import Input, Output
 import plotly.graph_objects as go
 
-# ── state file paths (must match state_writer.py) ─────────────────────────────
-STATE_DIR           = Path("C:/Ballom_FYR/state")
-APP_STATUS_FILE     = STATE_DIR / "app_status.json"
-SIGNAL_STATE_FILE   = STATE_DIR / "signal_state.json"
-POSITION_STATE_FILE = STATE_DIR / "position_state.json"
-ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"
-STRATEGY_LOG_FILE   = STATE_DIR / "strategy_log.json"
+from constants import (
+    STATE_DIR_DEMO,
+    STATE_DIR_LIVE,
+    STATE_DIR_BASE,
+    DASHBOARD_PORT,
+    DASHBOARD_REFRESH_MS,
+    get_state_dir,
+)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  MODE DETECTION
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _detect_active_mode() -> str:
+    """
+    Auto-detect which mode is running by comparing timestamps in
+    app_status.json for demo vs live.  Returns the more recently updated one.
+    Falls back to 'demo' if neither exists.
+    """
+    demo_file = STATE_DIR_DEMO / "app_status.json"
+    live_file = STATE_DIR_LIVE / "app_status.json"
+    demo_ts = demo_file.stat().st_mtime if demo_file.exists() else 0
+    live_ts = live_file.stat().st_mtime if live_file.exists() else 0
+    if live_ts > demo_ts:
+        return "live"
+    return "demo"
+
+
+def _resolve_state_paths(mode: str) -> dict:
+    """Return a dict of state-file Path objects for the given mode."""
+    d = get_state_dir(mode)
+    return {
+        "app_status":     d / "app_status.json",
+        "signal_state":   d / "signal_state.json",
+        "position_state": d / "position_state.json",
+        "account_state":  d / "account_state.json",
+        "strategy_log":   d / "strategy_log.json",
+    }
+
+
+# ── resolve mode from CLI or auto-detect ──────────────────────────────────────
+_cli_args = sys.argv[1:]
+_mode_arg = None
+_port_arg = DASHBOARD_PORT
+
+for arg in _cli_args:
+    if arg.lower() in ("demo", "live"):
+        _mode_arg = arg.lower()
+    elif arg.isdigit():
+        _port_arg = int(arg)
+
+ACTIVE_MODE = _mode_arg or _detect_active_mode()
+STATE_PATHS = _resolve_state_paths(ACTIVE_MODE)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -135,6 +184,20 @@ app.layout = html.Div(
                     "background": YELLOW, "color": "#000", "padding": "4px 14px",
                     "borderRadius": "20px", "fontSize": "0.8rem", "fontWeight": "600",
                 }),
+                # ── mode selector ────────────────────────────────────────
+                dcc.Dropdown(
+                    id="mode-selector",
+                    options=[
+                        {"label": "🎯 DEMO", "value": "demo"},
+                        {"label": "⚠️  LIVE", "value": "live"},
+                    ],
+                    value=ACTIVE_MODE,
+                    clearable=False,
+                    style={
+                        "width": "140px", "fontSize": "0.85rem",
+                        "backgroundColor": CARD_BG, "color": "#000",
+                    },
+                ),
             ],
         ),
         html.P(id="last-updated", style={"color": "#666", "fontSize": "0.8rem", "marginBottom": "20px"}),
@@ -184,7 +247,7 @@ app.layout = html.Div(
         ),
 
         # ── auto-refresh timer ────────────────────────────────────────────
-        dcc.Interval(id="refresh-timer", interval=5_000, n_intervals=0),
+        dcc.Interval(id="refresh-timer", interval=DASHBOARD_REFRESH_MS, n_intervals=0),
     ],
 )
 
@@ -203,18 +266,22 @@ app.layout = html.Div(
         Output("signal-cards-container", "children"),
         Output("strategy-log-container", "children"),
     ],
-    Input("refresh-timer", "n_intervals"),
+    [Input("refresh-timer", "n_intervals"),
+     Input("mode-selector", "value")],
 )
-def refresh_dashboard(_n):
-    app_data = _read(APP_STATUS_FILE)
-    acct_data = _read(ACCOUNT_STATE_FILE)
-    pos_data = _read(POSITION_STATE_FILE)
-    sig_data = _read(SIGNAL_STATE_FILE)
-    log_data = _read(STRATEGY_LOG_FILE)
+def refresh_dashboard(_n, selected_mode):
+    # Resolve state file paths based on the dropdown selection
+    paths = _resolve_state_paths(selected_mode or ACTIVE_MODE)
+
+    app_data = _read(paths["app_status"])
+    acct_data = _read(paths["account_state"])
+    pos_data = _read(paths["position_state"])
+    sig_data = _read(paths["signal_state"])
+    log_data = _read(paths["strategy_log"])
 
     # ── header badges ─────────────────────────────────────────────────────
     status_text = app_data.get("status", "offline").upper()
-    mode_text = app_data.get("mode", "—").upper()
+    mode_text = (selected_mode or ACTIVE_MODE).upper()
     last_ts = acct_data.get("timestamp", app_data.get("timestamp", "—"))
 
     # ── KPI cards ─────────────────────────────────────────────────────────
@@ -428,7 +495,13 @@ def refresh_dashboard(_n):
 # ═══════════════════════════════════════════════════════════════════════════════
 
 if __name__ == "__main__":
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8050
-    # Ensure state directory exists so dashboard doesn't crash on first load
-    STATE_DIR.mkdir(parents=True, exist_ok=True)
-    app.run(debug=False, host="0.0.0.0", port=port)
+    # Ensure both state directories exist so dashboard doesn't crash on first load
+    STATE_DIR_DEMO.mkdir(parents=True, exist_ok=True)
+    STATE_DIR_LIVE.mkdir(parents=True, exist_ok=True)
+
+    print(f"📊 Ballom FYR Dashboard starting on http://127.0.0.1:{_port_arg}")
+    print(f"   Monitoring mode: {ACTIVE_MODE.upper()}")
+    print(f"   State dir: {get_state_dir(ACTIVE_MODE)}")
+    print(f"   (Use the dropdown to switch between DEMO / LIVE)\n")
+
+    app.run(debug=False, host="0.0.0.0", port=_port_arg)
