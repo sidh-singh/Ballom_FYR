@@ -57,9 +57,6 @@ echo.
 
 :CONTINUE_SCRIPT
 
-REM === Move one directory up ===
-cd ..
-
 echo ============= STARTING SCRIPT =============
 
 REM === Check if requirements already installed ===

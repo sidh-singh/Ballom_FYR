@@ -46,9 +46,6 @@ if not "%PORT%"=="" (
 echo ================================================================================
 echo.
 
-REM === Move one directory up ===
-cd ..
-
 REM === Check if dash is installed ===
 "%PYTHON_EXE%" -c "import dash" >nul 2>&1
 if errorlevel 1 (
