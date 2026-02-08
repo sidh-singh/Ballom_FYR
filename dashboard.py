@@ -2,16 +2,16 @@
 dashboard.py — Live Dash / Plotly dashboard for Ballom_FYR.
 
 Reads JSON state files from C:/Ballom_FYR/state/<mode>/ and displays:
-  • Account balance, realized / unrealized P&L
-  • Open positions table
-  • SHA signal strength, power, list, crossover per symbol
-  • Strategy decision log (rolling)
+  * Account balance, realized / unrealized P&L
+  * Open positions table
+  * SHA signal strength, power, list, crossover per symbol
+  * Strategy decision log (rolling)
 
 Launch:
-    python dashboard.py               → auto-detect mode, http://127.0.0.1:8050
-    python dashboard.py demo          → force demo mode
-    python dashboard.py live          → force live mode
-    python dashboard.py demo 8060     → demo mode on port 8060
+    python dashboard.py               -> auto-detect mode, http://127.0.0.1:8050
+    python dashboard.py demo          -> force demo mode
+    python dashboard.py live          -> force live mode
+    python dashboard.py demo 8060     -> demo mode on port 8060
 """
 
 from __future__ import annotations
@@ -36,16 +36,67 @@ from constants import (
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
+#  PREMIUM COLOR PALETTE
+# ======================================================================
+
+COLORS = {
+    # Backgrounds
+    "bg":             "#0a0e1a",
+    "bg_secondary":   "#0f1423",
+    "card":           "rgba(17, 22, 40, 0.85)",
+    "card_solid":     "#111628",
+    "card_border":    "rgba(99, 115, 171, 0.12)",
+    # Text
+    "text":           "#e8ecf4",
+    "text_secondary": "#a3adc4",
+    "text_dim":       "#5a6580",
+    "text_muted":     "#3d4660",
+    # Accents
+    "accent":         "#7c6cf0",
+    "accent_glow":    "rgba(124, 108, 240, 0.25)",
+    "accent_soft":    "rgba(124, 108, 240, 0.12)",
+    # Signals
+    "positive":       "#00d2a0",
+    "positive_soft":  "rgba(0, 210, 160, 0.12)",
+    "positive_glow":  "rgba(0, 210, 160, 0.3)",
+    "negative":       "#ff6b6b",
+    "negative_soft":  "rgba(255, 107, 107, 0.12)",
+    "negative_glow":  "rgba(255, 107, 107, 0.3)",
+    "warning":        "#ffd93d",
+    "neutral":        "#5a6580",
+    # UI
+    "divider":        "rgba(99, 115, 171, 0.1)",
+    "chart_grid":     "rgba(99, 115, 171, 0.08)",
+    "gradient_start": "#7c6cf0",
+    "gradient_end":   "#00d2a0",
+}
+
+# Legacy aliases used in callback
+BG      = COLORS["bg"]
+CARD_BG = COLORS["card_solid"]
+TEXT    = COLORS["text"]
+ACCENT  = COLORS["positive"]
+RED     = COLORS["negative"]
+YELLOW  = COLORS["warning"]
+
+# Shared glassmorphism card style
+CARD_STYLE = {
+    "background": COLORS["card"],
+    "backdropFilter": "blur(20px)",
+    "WebkitBackdropFilter": "blur(20px)",
+    "border": f"1px solid {COLORS['card_border']}",
+    "borderRadius": "16px",
+    "padding": "20px 24px",
+    "transition": "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
+}
+
+
+# ======================================================================
 #  MODE DETECTION
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 
 def _detect_active_mode() -> str:
-    """
-    Auto-detect which mode is running by comparing timestamps in
-    app_status.json for demo vs live.  Returns the more recently updated one.
-    Falls back to 'demo' if neither exists.
-    """
     demo_file = STATE_DIR_DEMO / "app_status.json"
     live_file = STATE_DIR_LIVE / "app_status.json"
     demo_ts = demo_file.stat().st_mtime if demo_file.exists() else 0
@@ -56,20 +107,18 @@ def _detect_active_mode() -> str:
 
 
 def _resolve_state_paths(mode: str) -> dict:
-    """Return a dict of state-file Path objects for the given mode."""
     d = get_state_dir(mode)
     return {
-        "app_status":        d / "app_status.json",
-        "signal_state":      d / "signal_state.json",
-        "position_state":    d / "position_state.json",
-        "account_state":     d / "account_state.json",
-        "strategy_log":      d / "strategy_log.json",
-        "position_tracker":  d / "position_tracker.json",
-        "profit_history":    d / "profit_history.json",
+        "app_status":       d / "app_status.json",
+        "signal_state":     d / "signal_state.json",
+        "position_state":   d / "position_state.json",
+        "account_state":    d / "account_state.json",
+        "strategy_log":     d / "strategy_log.json",
+        "position_tracker": d / "position_tracker.json",
+        "profit_history":   d / "profit_history.json",
     }
 
 
-# ── resolve mode from CLI or auto-detect ──────────────────────────────────────
 _cli_args = sys.argv[1:]
 _mode_arg = None
 _port_arg = DASHBOARD_PORT
@@ -84,9 +133,9 @@ ACTIVE_MODE = _mode_arg or _detect_active_mode()
 STATE_PATHS = _resolve_state_paths(ACTIVE_MODE)
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 #  HELPERS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 
 def _read(path: Path):
     if not path.exists():
@@ -98,51 +147,120 @@ def _read(path: Path):
         return {}
 
 
-def _kpi_card(title: str, value: str, color: str = "#18bc9c") -> html.Div:
-    """Return a styled KPI card element."""
+def _kpi_card(title: str, value: str, color: str = None,
+              icon: str = "", sub: str = "") -> html.Div:
+    """Premium KPI card with glassmorphism and subtle glow."""
+    color = color or COLORS["positive"]
+    if color == COLORS["positive"]:
+        glow = COLORS["positive_glow"]
+        border_accent = "rgba(0, 210, 160, 0.25)"
+    elif color == COLORS["negative"]:
+        glow = COLORS["negative_glow"]
+        border_accent = "rgba(255, 107, 107, 0.25)"
+    elif color == COLORS["accent"]:
+        glow = COLORS["accent_glow"]
+        border_accent = "rgba(124, 108, 240, 0.25)"
+    elif color == "#9b59b6":
+        glow = "rgba(155, 89, 182, 0.3)"
+        border_accent = "rgba(155, 89, 182, 0.25)"
+    else:
+        glow = COLORS["accent_glow"]
+        border_accent = COLORS["card_border"]
+
     return html.Div(
         children=[
-            html.H6(title, style={"margin": 0, "color": "#999", "fontSize": "0.85rem"}),
-            html.H3(value, style={"margin": 0, "color": color, "fontWeight": "700"}),
+            html.Div(
+                style={"display": "flex", "alignItems": "center", "marginBottom": "8px"},
+                children=[
+                    html.Span(icon, style={
+                        "fontSize": "12px", "marginRight": "6px", "opacity": "0.7",
+                    }) if icon else None,
+                    html.Span(title, style={
+                        "fontSize": "10px", "color": COLORS["text_dim"],
+                        "textTransform": "uppercase", "letterSpacing": "1.2px",
+                        "fontWeight": "600",
+                    }),
+                ],
+            ),
+            html.H3(value, style={
+                "margin": 0, "color": color, "fontWeight": "700",
+                "fontSize": "1.25rem",
+                "fontFamily": "'JetBrains Mono', 'SF Mono', monospace",
+                "letterSpacing": "-0.3px",
+                "lineHeight": "1.2",
+            }),
+            html.Div(sub, style={
+                "fontSize": "10px", "color": COLORS["text_dim"],
+                "marginTop": "4px",
+            }) if sub else None,
         ],
         style={
-            "background": "#1e1e2f",
-            "borderRadius": "12px",
-            "padding": "18px 22px",
+            "background": COLORS["card"],
+            "backdropFilter": "blur(20px)",
+            "WebkitBackdropFilter": "blur(20px)",
+            "border": f"1px solid {border_accent}",
+            "borderRadius": "14px",
+            "padding": "16px 20px",
             "flex": "1",
-            "minWidth": "180px",
-            "boxShadow": "0 2px 8px rgba(0,0,0,0.25)",
+            "minWidth": "155px",
+            "boxShadow": f"0 4px 20px rgba(0,0,0,0.3), 0 0 30px {glow}",
+            "transition": "all 0.3s cubic-bezier(0.4, 0, 0.2, 1)",
         },
     )
 
 
 def _crossover_dots(cross_list: list, max_items: int = 7) -> html.Div:
-    """Render a crossover list as 7 rectangular bar segments (like Power).
-
-    Each value in cross_list is in {-3, -2, -1, 0, 1, 2, 3}.
-    Positive → green shades  (1 = light, 2 = medium, 3 = dark)
-    Negative → red shades    (−1 = light, −2 = medium, −3 = dark)
-    Zero     → dim placeholder
-    """
-    green_shades = {1: "#82e0aa", 2: "#27ae60", 3: "#0d6b3a"}  # light, med, dark
-    red_shades   = {1: "#f1948a", 2: "#e74c3c", 3: "#922b21"}
-
-    bars = []
+    """Crossover as circle dots with green/red intensity shading + fade."""
+    green_map = {1: "#4de8c8", 2: "#00d2a0", 3: "#009d7a"}
+    red_map   = {1: "#ee7b6e", 2: "#e74c3c", 3: "#c0392b"}
+    dots = []
     for i in range(max_items):
         v = cross_list[i] if i < len(cross_list) else 0
         if v > 0:
-            c = green_shades.get(min(abs(v), 3), "#82e0aa")
+            c = green_map.get(min(abs(v), 3), "#4de8c8")
         elif v < 0:
-            c = red_shades.get(min(abs(v), 3), "#f1948a")
+            c = red_map.get(min(abs(v), 3), "#ee7b6e")
         else:
-            c = "#2c2c3e"
-        bars.append(html.Span(style={
-            "display": "inline-block", "width": "8px", "height": "16px",
-            "borderRadius": "2px", "background": c,
-            "marginRight": "2px",
+            c = "rgba(255,255,255,0.06)"
+        opacity = max(0.35, 1.0 - (i * 0.09))
+        dots.append(html.Span(style={
+            "display": "inline-block", "width": "10px", "height": "10px",
+            "borderRadius": "50%", "background": c,
+            "marginRight": "3px", "opacity": str(opacity),
         }))
+    return html.Div(dots, style={"display": "inline-flex", "alignItems": "center"})
 
-    return html.Div(bars, style={"display": "inline-flex", "alignItems": "center"})
+
+def _cross_power_bar(cross_list: list, max_items: int = 7) -> html.Div:
+    """Power bar for crossover -- segments colored per value intensity."""
+    green_map = {1: "#4de8c8", 2: "#00d2a0", 3: "#009d7a"}
+    red_map   = {1: "#ee7b6e", 2: "#e74c3c", 3: "#c0392b"}
+    bull_count = sum(1 for v in cross_list[:max_items] if v > 0)
+    segs = []
+    for i in range(max_items):
+        if i < len(cross_list):
+            v = cross_list[i]
+            if v > 0:
+                c = green_map.get(v, "#81c784")
+            elif v < 0:
+                c = red_map.get(abs(v), "#e57373")
+            else:
+                c = "rgba(255,255,255,0.06)"
+        else:
+            c = "rgba(255,255,255,0.06)"
+        segs.append(html.Span(style={
+            "display": "inline-block", "width": "8px", "height": "16px",
+            "borderRadius": "3px", "background": c, "marginRight": "2px",
+        }))
+    p_color = "#00d2a0" if bull_count >= 5 else "#f39c12" if bull_count >= 3 else "#e74c3c"
+    return html.Div([
+        *segs,
+        html.Span(f" {bull_count}", style={
+            "fontSize": "0.75rem", "fontWeight": "700", "marginLeft": "4px",
+            "color": p_color if bull_count > 0 else COLORS["text_dim"],
+            "fontFamily": "'JetBrains Mono', monospace",
+        }),
+    ], style={"display": "inline-flex", "alignItems": "center"})
 
 
 def _power_bar(power: int, max_power: int = 7) -> html.Div:
@@ -150,29 +268,30 @@ def _power_bar(power: int, max_power: int = 7) -> html.Div:
     dots = []
     for i in range(max_power):
         if i < power:
-            c = "#18bc9c" if power >= 5 else "#f39c12" if power >= 3 else "#e74c3c"
+            c = "#00d2a0" if power >= 5 else "#f39c12" if power >= 3 else "#e74c3c"
         else:
-            c = "#2c2c3e"
+            c = "rgba(255,255,255,0.06)"
         dots.append(html.Span(style={
             "display": "inline-block", "width": "8px", "height": "16px",
-            "borderRadius": "2px", "background": c, "marginRight": "2px",
+            "borderRadius": "3px", "background": c, "marginRight": "2px",
         }))
+    p_color = "#00d2a0" if power >= 5 else "#f39c12" if power >= 3 else "#e74c3c"
     return html.Div(
         children=[*dots, html.Span(f" {power}", style={
             "fontSize": "0.75rem", "fontWeight": "700", "marginLeft": "4px",
-            "color": "#18bc9c" if power >= 5 else "#f39c12" if power >= 3 else "#e74c3c",
+            "color": p_color if power > 0 else COLORS["text_dim"],
+            "fontFamily": "'JetBrains Mono', monospace",
         })],
         style={"display": "inline-flex", "alignItems": "center"},
     )
 
 
 def _list_dots(lst: list, max_items: int = 7) -> html.Div:
-    """Render the bullish/bearish list as colored circle dots."""
+    """Bullish/bearish list as colored circle dots with fade."""
     dots = []
     for i, v in enumerate(lst[:max_items]):
-        is_bull = v == 1
-        c = "#18bc9c" if is_bull else "#e74c3c"
-        opacity = 1.0 - (i * 0.08)
+        c = "#00d2a0" if v == 1 else "#e74c3c"
+        opacity = max(0.35, 1.0 - (i * 0.09))
         dots.append(html.Span(style={
             "display": "inline-block", "width": "10px", "height": "10px",
             "borderRadius": "50%", "background": c,
@@ -183,79 +302,90 @@ def _list_dots(lst: list, max_items: int = 7) -> html.Div:
 
 def _signal_row(label: str, icon: str, color: str,
                 power: int, lst: list, cross_list: list) -> html.Div:
-    """One compact row for CE / PE / IDX in the signal card."""
+    """One compact row for CE / PE / IDX -- 4-column grid."""
     return html.Div(
         style={
             "display": "grid",
-            "gridTemplateColumns": "60px 1fr 1fr 1fr",
+            "gridTemplateColumns": "64px 1fr 1fr 1fr",
             "gap": "8px", "alignItems": "center",
-            "padding": "6px 0",
+            "padding": "8px 0",
         },
         children=[
             html.Span(f"{icon} {label}", style={
-                "fontWeight": "700", "fontSize": "0.8rem", "color": color,
+                "fontWeight": "700", "fontSize": "0.82rem", "color": color,
             }),
             _power_bar(power),
             _list_dots(lst),
-            _crossover_dots(cross_list),
+            _cross_power_bar(cross_list),
         ],
     )
 
 
 def _action_badge(action: str) -> html.Span:
-    """Compact colored pill badge for a strategy action."""
+    """Premium colored pill badge with glow for a strategy action."""
     act_upper = action.upper()
     if "MARTINGALE" in act_upper:
-        bg, fg = "#9b59b6", "#f0e6f6"
-        icon = "⚡"
+        bg, fg, glow = "#9b59b6", "#f0e6f6", "rgba(155, 89, 182, 0.3)"
+        icon = "\u26a1"
     elif "EXIT" in act_upper or "CLOSE" in act_upper:
         if "PROFIT" in act_upper:
-            bg, fg = "#18bc9c", "#0d2f25"
-            icon = "💰"
+            bg, fg, glow = "#00d2a0", "#0d2f25", COLORS["positive_glow"]
+            icon = "\U0001f4b0"
         elif "ADVERSE" in act_upper:
-            bg, fg = "#e67e22", "#3a2412"
-            icon = "⚠️"
+            bg, fg, glow = "#e67e22", "#3a2412", "rgba(230, 126, 34, 0.3)"
+            icon = "\u26a0\ufe0f"
         else:
-            bg, fg = "#3498db", "#12283a"
-            icon = "🔄"
+            bg, fg, glow = "#3498db", "#12283a", "rgba(52, 152, 219, 0.3)"
+            icon = "\U0001f504"
     elif "BUY" in act_upper:
-        bg, fg = "#27ae60", "#122a1c"
-        icon = "🟢"
+        bg, fg, glow = "#00d2a0", "#0d2f25", COLORS["positive_glow"]
+        icon = "\U0001f7e2"
     elif "SELL" in act_upper:
-        bg, fg = "#e74c3c", "#3a1212"
-        icon = "🔴"
+        bg, fg, glow = "#ff6b6b", "#3a1212", COLORS["negative_glow"]
+        icon = "\U0001f534"
     elif "ANALYSIS" in act_upper or "EVAL" in act_upper:
-        bg, fg = "#34495e", "#bdc3c7"
-        icon = "🔍"
+        bg, fg, glow = "#34495e", "#bdc3c7", "rgba(52, 73, 94, 0.3)"
+        icon = "\U0001f50d"
     elif "BLOCKED" in act_upper or "BRAKE" in act_upper:
-        bg, fg = "#7f8c8d", "#ecf0f1"
-        icon = "🚫"
+        bg, fg, glow = "#7f8c8d", "#ecf0f1", "rgba(127, 140, 141, 0.3)"
+        icon = "\U0001f6ab"
     else:
-        bg, fg = "#2c3e50", "#bdc3c7"
-        icon = "📌"
+        bg, fg, glow = "#2c3e50", "#bdc3c7", "rgba(44, 62, 80, 0.3)"
+        icon = "\U0001f4cc"
+
     return html.Span(f"{icon} {action}", style={
-        "background": bg, "color": fg,
-        "padding": "2px 8px", "borderRadius": "8px",
-        "fontSize": "0.7rem", "fontWeight": "600",
+        "background": f"linear-gradient(135deg, {bg}, {bg}dd)",
+        "color": fg,
+        "padding": "3px 12px", "borderRadius": "20px",
+        "fontSize": "0.72rem", "fontWeight": "700",
         "whiteSpace": "nowrap",
+        "letterSpacing": "0.5px",
+        "boxShadow": f"0 0 12px {glow}, 0 2px 6px rgba(0,0,0,0.25)",
+        "textShadow": "0 1px 2px rgba(0,0,0,0.2)",
+        "display": "inline-block",
     })
 
 
 def _build_profit_chart(history_data: list) -> go.Figure:
-    """Build a Plotly line chart of effective P&L over time per symbol."""
+    """Build a premium Plotly line chart of effective P&L over time."""
     empty_layout = dict(
         template="plotly_dark",
-        paper_bgcolor="#121225",
-        plot_bgcolor="#1e1e2f",
-        height=300,
-        margin=dict(l=40, r=20, t=10, b=40),
+        paper_bgcolor="rgba(0,0,0,0)",
+        plot_bgcolor="rgba(0,0,0,0)",
+        height=320,
+        margin=dict(l=50, r=20, t=10, b=40),
+        font=dict(
+            color=COLORS["text_secondary"],
+            size=11,
+            family="'Inter', sans-serif",
+        ),
     )
 
     if not history_data:
         fig = go.Figure()
         fig.update_layout(**empty_layout)
         fig.add_annotation(text="No profit data yet", showarrow=False,
-                           font=dict(size=14, color="#666"),
+                           font=dict(size=14, color=COLORS["text_dim"]),
                            xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
 
@@ -270,11 +400,10 @@ def _build_profit_chart(history_data: list) -> go.Figure:
         fig = go.Figure()
         fig.update_layout(**empty_layout)
         fig.add_annotation(text="No data for today yet", showarrow=False,
-                           font=dict(size=14, color="#666"),
+                           font=dict(size=14, color=COLORS["text_dim"]),
                            xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
 
-    # Group by symbol
     symbols: dict = {}
     for entry in today_data:
         sym = entry.get("symbol", "")
@@ -294,176 +423,302 @@ def _build_profit_chart(history_data: list) -> go.Figure:
             symbols[sym]["mg_y"].append(entry.get("effective_pl", 0))
 
     fig = go.Figure()
-    colors = ["#18bc9c", "#e74c3c", "#f39c12", "#3498db", "#9b59b6", "#1abc9c"]
+    chart_colors = ["#00d2a0", "#ff6b6b", "#ffd93d", "#7c6cf0", "#5dade2", "#e74c3c"]
 
     for i, (sym, data) in enumerate(symbols.items()):
-        color = colors[i % len(colors)]
+        color = chart_colors[i % len(chart_colors)]
         short_name = sym.split(":")[-1] if ":" in sym else sym
+        r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
+        fill_color = f"rgba({r},{g},{b},0.06)"
 
         fig.add_trace(go.Scatter(
             x=data["x"], y=data["y"],
-            mode="lines",
-            name=short_name,
-            line=dict(color=color, width=2),
+            mode="lines", name=short_name,
+            line=dict(color=color, width=2.5, shape="spline"),
+            fill="tozeroy", fillcolor=fill_color,
         ))
-
         if data["close_x"]:
             fig.add_trace(go.Scatter(
                 x=data["close_x"], y=data["close_y"],
-                mode="markers",
-                name=f"{short_name} ★ close",
-                marker=dict(color=color, size=10, symbol="star"),
+                mode="markers", name=f"{short_name} close",
+                marker=dict(color=color, size=10, symbol="star",
+                            line=dict(width=2, color=COLORS["bg"])),
                 showlegend=False,
             ))
-
         if data["mg_x"]:
             fig.add_trace(go.Scatter(
                 x=data["mg_x"], y=data["mg_y"],
-                mode="markers",
-                name=f"{short_name} ◆ martingale",
-                marker=dict(color="#9b59b6", size=9, symbol="diamond"),
+                mode="markers", name=f"{short_name} martingale",
+                marker=dict(color="#9b59b6", size=9, symbol="diamond",
+                            line=dict(width=2, color=COLORS["bg"])),
                 showlegend=False,
             ))
 
-    fig.add_hline(y=0, line_dash="dash", line_color="#666", opacity=0.5)
+    fig.add_hline(y=0, line_dash="dot", line_color=COLORS["text_muted"], opacity=0.5)
     fig.update_layout(
         **empty_layout,
-        xaxis=dict(title="Time", showgrid=True, gridcolor="#2c2c3e"),
-        yaxis=dict(title="Effective P&L (₹)", showgrid=True, gridcolor="#2c2c3e"),
-        legend=dict(orientation="h", y=-0.25),
+        xaxis=dict(title="Time", showgrid=False,
+                   tickfont=dict(size=10, color=COLORS["text_dim"])),
+        yaxis=dict(title="Effective P&L", showgrid=True,
+                   gridcolor=COLORS["chart_grid"], gridwidth=0.5,
+                   zeroline=True, zerolinecolor=COLORS["text_muted"],
+                   zerolinewidth=0.5,
+                   tickfont=dict(size=10, color=COLORS["text_dim"])),
+        legend=dict(orientation="h", y=-0.25,
+                    font=dict(size=10, color=COLORS["text_dim"])),
     )
     return fig
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 #  DASH APP
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 
 app = dash.Dash(
     __name__,
-    title="Ballom FYR — Dashboard",
+    title="Ballom FYR \u2014 Dashboard",
     update_title=None,
+    suppress_callback_exceptions=True,
 )
 
-# ── colour theme ───────────────────────────────────────────────────────────────
-BG = "#121225"
-CARD_BG = "#1e1e2f"
-TEXT = "#ecf0f1"
-ACCENT = "#18bc9c"
-RED = "#e74c3c"
-YELLOW = "#f39c12"
+# Custom HTML with premium Google Fonts, animations, scrollbar
+app.index_string = """<!DOCTYPE html>
+<html>
+<head>
+{%metas%}
+<title>{%title%}</title>
+{%favicon%}
+{%css%}
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+    *, *::before, *::after { box-sizing: border-box; }
+    body {
+        margin: 0; padding: 0; background: #0a0e1a;
+        font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        -webkit-font-smoothing: antialiased;
+        -moz-osx-font-smoothing: grayscale;
+    }
+    ._dash-loading-callback, .dash-loading, ._dash-loading,
+    div._dash-loading-callback--is-loading { visibility: hidden !important; }
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: rgba(124, 108, 240, 0.25); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(124, 108, 240, 0.45); }
+
+    @keyframes fadeIn {
+        from { opacity: 0; transform: translateY(8px); }
+        to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes shimmer {
+        0%   { background-position: -200% 0; }
+        100% { background-position: 200% 0; }
+    }
+    @keyframes liveDot {
+        0%, 100% { opacity: 0.5; transform: scale(0.9); }
+        50%      { opacity: 1;   transform: scale(1.15); }
+    }
+    .fade-in { animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
+    .gradient-bar {
+        height: 3px;
+        background: linear-gradient(90deg, #7c6cf0, #00d2a0, #ffd93d, #ff6b6b, #7c6cf0);
+        background-size: 300% auto;
+        animation: shimmer 6s linear infinite;
+    }
+    ::selection { background: rgba(124, 108, 240, 0.3); color: #e8ecf4; }
+    .plotly .hoverlayer .hovertext { font-family: 'Inter', sans-serif !important; }
+
+    .dash-spreadsheet-container .dash-spreadsheet-inner th {
+        font-family: 'Inter', sans-serif !important; letter-spacing: 0.5px !important;
+    }
+    .dash-spreadsheet-container .dash-spreadsheet-inner td {
+        font-family: 'JetBrains Mono', monospace !important;
+    }
+    .Select-control { background: #111628 !important; border-color: rgba(99,115,171,0.2) !important; border-radius: 10px !important; }
+    .Select-menu-outer { background: #111628 !important; border-color: rgba(99,115,171,0.2) !important; border-radius: 10px !important; }
+    .Select-option.is-focused { background: rgba(124,108,240,0.15) !important; }
+    .Select-value-label { color: #e8ecf4 !important; }
+</style>
+</head>
+<body>
+{%app_entry%}
+<footer>{%config%}{%scripts%}{%renderer%}</footer>
+</body>
+</html>
+"""
+
 
 app.layout = html.Div(
     style={
-        "fontFamily": "'Segoe UI', Roboto, sans-serif",
-        "backgroundColor": BG,
-        "color": TEXT,
+        "fontFamily": "'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif",
+        "backgroundColor": COLORS["bg"],
+        "color": COLORS["text"],
         "minHeight": "100vh",
-        "padding": "20px 30px",
     },
     children=[
-        # ── header ────────────────────────────────────────────────────────
-        html.Div(
-            style={"display": "flex", "alignItems": "center", "gap": "16px", "marginBottom": "10px"},
-            children=[
-                html.H1("📊 Ballom FYR", style={"margin": 0, "fontSize": "1.8rem"}),
-                html.Div(id="app-status-badge", style={
-                    "background": ACCENT, "padding": "4px 14px", "borderRadius": "20px",
-                    "fontSize": "0.8rem", "fontWeight": "600",
-                }),
-                html.Div(id="app-mode-badge", style={
-                    "background": YELLOW, "color": "#000", "padding": "4px 14px",
-                    "borderRadius": "20px", "fontSize": "0.8rem", "fontWeight": "600",
-                }),
-                # ── mode selector ────────────────────────────────────────
-                dcc.Dropdown(
-                    id="mode-selector",
-                    options=[
-                        {"label": "🎯 DEMO", "value": "demo"},
-                        {"label": "⚠️  LIVE", "value": "live"},
-                    ],
-                    value=ACTIVE_MODE,
-                    clearable=False,
-                    style={
-                        "width": "140px", "fontSize": "0.85rem",
-                        "backgroundColor": CARD_BG, "color": "#000",
-                    },
-                ),
-            ],
-        ),
-        html.P(id="last-updated", style={"color": "#666", "fontSize": "0.8rem", "marginBottom": "20px"}),
+        # Animated gradient top accent bar
+        html.Div(className="gradient-bar"),
 
-        # ── KPI row ───────────────────────────────────────────────────────
-        html.Div(
-            id="kpi-row",
-            style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "24px"},
-        ),
-
-        # ── daily trading stats ───────────────────────────────────────────
-        html.Div(
-            id="daily-stats-row",
-            style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "24px"},
-        ),
-
-        # ── profit history chart ──────────────────────────────────────────
+        # Glassmorphism Header
         html.Div(
             style={
-                "background": "#1e1e2f", "borderRadius": "12px",
-                "padding": "16px", "marginBottom": "24px",
+                "display": "flex", "justifyContent": "space-between",
+                "alignItems": "center", "padding": "16px 36px",
+                "background": "rgba(10, 14, 26, 0.95)",
+                "backdropFilter": "blur(20px)",
+                "WebkitBackdropFilter": "blur(20px)",
+                "borderBottom": f"1px solid {COLORS['divider']}",
             },
             children=[
-                html.H4("📈 Profit History", style={"marginBottom": "10px"}),
-                dcc.Graph(id="profit-chart", config={"displayModeBar": False}),
-            ],
-        ),
-
-        # ── two-column layout ─────────────────────────────────────────────
-        html.Div(
-            style={"display": "flex", "gap": "20px", "flexWrap": "wrap"},
-            children=[
-                # LEFT: positions + signals
+                # Logo
                 html.Div(
-                    style={"flex": "2", "minWidth": "500px"},
+                    style={"display": "flex", "alignItems": "center"},
                     children=[
-                        # Open Positions
-                        html.H4("📋 Open Positions", style={"marginBottom": "10px"}),
-                        html.Div(id="positions-table-container"),
-
-                        # SHA Signals
-                        html.H4("🎯 SHA Signal Analysis", style={"marginTop": "24px", "marginBottom": "10px"}),
-                        html.Div(id="signal-cards-container"),
+                        html.Div(style={
+                            "width": "36px", "height": "36px", "borderRadius": "10px",
+                            "background": f"linear-gradient(135deg, {COLORS['gradient_start']}, {COLORS['gradient_end']})",
+                            "boxShadow": f"0 4px 18px {COLORS['accent_glow']}",
+                            "marginRight": "16px",
+                        }),
+                        html.Div([
+                            html.Span("BALLOM FYR", style={
+                                "fontSize": "18px", "fontWeight": "800",
+                                "letterSpacing": "3px",
+                                "background": f"linear-gradient(135deg, {COLORS['text']}, {COLORS['accent']})",
+                                "WebkitBackgroundClip": "text",
+                                "WebkitTextFillColor": "transparent",
+                            }),
+                            html.Div("Trading Dashboard", style={
+                                "fontSize": "10px", "color": COLORS["text_dim"],
+                                "letterSpacing": "2px", "textTransform": "uppercase",
+                                "marginTop": "1px",
+                            }),
+                        ]),
                     ],
                 ),
-
-                # RIGHT: strategy log
+                # Center -- status badges + selector
                 html.Div(
-                    style={"flex": "1", "minWidth": "350px"},
+                    style={"display": "flex", "alignItems": "center", "gap": "12px"},
                     children=[
-                        html.H4("📝 Strategy Log", style={"marginBottom": "10px"}),
-                        html.Div(
-                            id="strategy-log-container",
-                            style={
-                                "background": CARD_BG,
-                                "borderRadius": "12px",
-                                "padding": "14px",
-                                "maxHeight": "600px",
-                                "overflowY": "auto",
-                            },
+                        html.Div(style={
+                            "width": "8px", "height": "8px", "borderRadius": "50%",
+                            "background": COLORS["positive"],
+                            "boxShadow": f"0 0 10px {COLORS['positive_glow']}",
+                            "animation": "liveDot 2s ease-in-out infinite",
+                        }),
+                        html.Div(id="app-status-badge", style={
+                            "background": f"linear-gradient(135deg, {COLORS['positive']}, {COLORS['positive']}dd)",
+                            "color": "#fff", "padding": "5px 18px", "borderRadius": "24px",
+                            "fontSize": "11px", "fontWeight": "700", "letterSpacing": "1px",
+                            "boxShadow": f"0 0 16px {COLORS['positive_glow']}, 0 2px 8px rgba(0,0,0,0.3)",
+                        }),
+                        html.Div(id="app-mode-badge", style={
+                            "background": f"linear-gradient(135deg, {COLORS['warning']}, {COLORS['warning']}dd)",
+                            "color": "#000", "padding": "5px 18px", "borderRadius": "24px",
+                            "fontSize": "11px", "fontWeight": "700", "letterSpacing": "1px",
+                            "boxShadow": "0 0 16px rgba(255,217,61,0.25), 0 2px 8px rgba(0,0,0,0.3)",
+                        }),
+                        dcc.Dropdown(
+                            id="mode-selector",
+                            options=[
+                                {"label": "\U0001f3af DEMO", "value": "demo"},
+                                {"label": "\u26a0\ufe0f  LIVE", "value": "live"},
+                            ],
+                            value=ACTIVE_MODE, clearable=False,
+                            style={"width": "140px", "fontSize": "0.82rem"},
                         ),
                     ],
                 ),
+                # Right -- timestamp
+                html.Div(id="last-updated", style={
+                    "fontSize": "11px", "color": COLORS["text_dim"],
+                    "fontFamily": "'JetBrains Mono', monospace", "fontWeight": "400",
+                }),
             ],
         ),
 
-        # ── auto-refresh timer ────────────────────────────────────────────
+        # Main content
+        html.Div(
+            style={"padding": "28px 36px 48px 36px", "maxWidth": "1400px", "margin": "0 auto"},
+            className="fade-in",
+            children=[
+                html.Div(id="kpi-row", style={
+                    "display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "24px"}),
+                html.Div(id="daily-stats-row", style={
+                    "display": "flex", "gap": "14px", "flexWrap": "wrap", "marginBottom": "24px"}),
+
+                # Profit history chart
+                html.Div(style={**CARD_STYLE, "marginBottom": "24px"}, children=[
+                    html.Div(style={"display": "flex", "alignItems": "center",
+                                    "gap": "8px", "marginBottom": "12px"}, children=[
+                        html.Span("\U0001f4c8", style={"fontSize": "16px"}),
+                        html.Span("Profit History", style={
+                            "fontSize": "15px", "fontWeight": "600",
+                            "color": COLORS["text"], "letterSpacing": "0.3px"}),
+                    ]),
+                    dcc.Graph(id="profit-chart", config={"displayModeBar": False}),
+                ]),
+
+                # Two-column layout
+                html.Div(style={"display": "flex", "gap": "24px", "flexWrap": "wrap"}, children=[
+                    # LEFT: positions + signals
+                    html.Div(style={"flex": "2", "minWidth": "500px"}, children=[
+                        html.Div(style={"display": "flex", "alignItems": "center",
+                                        "gap": "8px", "marginBottom": "12px"}, children=[
+                            html.Span("\U0001f4cb", style={"fontSize": "16px"}),
+                            html.Span("Open Positions", style={
+                                "fontSize": "15px", "fontWeight": "600",
+                                "color": COLORS["text"], "letterSpacing": "0.3px"}),
+                        ]),
+                        html.Div(id="positions-table-container"),
+                        html.Div(style={"display": "flex", "alignItems": "center",
+                                        "gap": "8px", "marginTop": "28px", "marginBottom": "12px"}, children=[
+                            html.Span("\U0001f3af", style={"fontSize": "16px"}),
+                            html.Span("SHA Signal Analysis", style={
+                                "fontSize": "15px", "fontWeight": "600",
+                                "color": COLORS["text"], "letterSpacing": "0.3px"}),
+                        ]),
+                        html.Div(id="signal-cards-container"),
+                    ]),
+                    # RIGHT: strategy log
+                    html.Div(style={"flex": "1", "minWidth": "380px"}, children=[
+                        html.Div(style={"display": "flex", "alignItems": "center",
+                                        "gap": "8px", "marginBottom": "12px"}, children=[
+                            html.Span("\U0001f4dd", style={"fontSize": "16px"}),
+                            html.Span("Strategy Log", style={
+                                "fontSize": "15px", "fontWeight": "600",
+                                "color": COLORS["text"], "letterSpacing": "0.3px"}),
+                        ]),
+                        html.Div(id="strategy-log-container", style={
+                            **CARD_STYLE, "maxHeight": "640px", "overflowY": "auto"}),
+                    ]),
+                ]),
+            ],
+        ),
+
+        # Footer
+        html.Div(style={"padding": "0 36px 20px"}, children=[
+            html.Div(style={
+                "height": "1px",
+                "background": f"linear-gradient(90deg, transparent, {COLORS['divider']}, transparent)",
+                "marginBottom": "16px",
+            }),
+            html.Div("Ballom FYR Trading System", style={
+                "textAlign": "center", "fontSize": "10px",
+                "color": COLORS["text_muted"],
+                "letterSpacing": "2px", "textTransform": "uppercase",
+            }),
+        ]),
+
         dcc.Interval(id="refresh-timer", interval=DASHBOARD_REFRESH_MS, n_intervals=0),
     ],
 )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 #  CALLBACKS
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 
 @app.callback(
     [
@@ -481,7 +736,6 @@ app.layout = html.Div(
      Input("mode-selector", "value")],
 )
 def refresh_dashboard(_n, selected_mode):
-    # Resolve state file paths based on the dropdown selection
     paths = _resolve_state_paths(selected_mode or ACTIVE_MODE)
 
     app_data = _read(paths["app_status"])
@@ -493,12 +747,12 @@ def refresh_dashboard(_n, selected_mode):
     history_raw = _read(paths["profit_history"])
     history_data = history_raw if isinstance(history_raw, list) else []
 
-    # ── header badges ─────────────────────────────────────────────────────
+    # Header badges
     status_text = app_data.get("status", "offline").upper()
     mode_text = (selected_mode or ACTIVE_MODE).upper()
-    last_ts = acct_data.get("timestamp", app_data.get("timestamp", "—"))
+    last_ts = acct_data.get("timestamp", app_data.get("timestamp", "\u2014"))
 
-    # ── KPI cards ─────────────────────────────────────────────────────────
+    # KPI cards
     balance = acct_data.get("balance", 0)
     realized = acct_data.get("realized_pnl", 0)
     unrealized = acct_data.get("unrealized_pnl", 0)
@@ -506,20 +760,22 @@ def refresh_dashboard(_n, selected_mode):
     win_rate = acct_data.get("win_rate", 0)
     total_trades = acct_data.get("total_trades", 0)
 
-    pnl_color = ACCENT if total_pnl >= 0 else RED
-    real_color = ACCENT if realized >= 0 else RED
-    unreal_color = ACCENT if unrealized >= 0 else RED
+    pnl_color = COLORS["positive"] if total_pnl >= 0 else COLORS["negative"]
+    real_color = COLORS["positive"] if realized >= 0 else COLORS["negative"]
+    unreal_color = COLORS["positive"] if unrealized >= 0 else COLORS["negative"]
 
     kpi_cards = [
-        _kpi_card("Balance", f"₹{balance:,.2f}"),
-        _kpi_card("Realized P&L", f"₹{realized:,.2f}", real_color),
-        _kpi_card("Unrealized P&L", f"₹{unrealized:,.2f}", unreal_color),
-        _kpi_card("Total P&L", f"₹{total_pnl:,.2f}", pnl_color),
-        _kpi_card("Win Rate", f"{win_rate:.1f}%", ACCENT if win_rate > 50 else RED),
-        _kpi_card("Total Trades", str(total_trades)),
+        _kpi_card("Balance", f"\u20b9{balance:,.2f}", COLORS["accent"], icon="\U0001f48e"),
+        _kpi_card("Realized P&L", f"\u20b9{realized:,.2f}", real_color, icon="\u2705"),
+        _kpi_card("Unrealized P&L", f"\u20b9{unrealized:,.2f}", unreal_color, icon="\U0001f4ca"),
+        _kpi_card("Total P&L", f"\u20b9{total_pnl:,.2f}", pnl_color, icon="\U0001f4b0"),
+        _kpi_card("Win Rate", f"{win_rate:.1f}%",
+                  COLORS["positive"] if win_rate > 50 else COLORS["negative"],
+                  icon="\U0001f3af"),
+        _kpi_card("Total Trades", str(total_trades), COLORS["accent"], icon="\U0001f4c8"),
     ]
 
-    # ── positions table ───────────────────────────────────────────────────
+    # Positions table
     positions = pos_data.get("positions", [])
     if positions:
         cols = ["symbol", "netQty", "netAvg", "ltp", "unrealized_profit", "productType"]
@@ -534,142 +790,162 @@ def refresh_dashboard(_n, selected_mode):
                 {"name": "Unrealized P&L", "id": "unrealized_profit"},
                 {"name": "Product", "id": "productType"},
             ],
-            style_table={"overflowX": "auto"},
+            style_table={"overflowX": "auto", "borderRadius": "12px"},
             style_header={
-                "backgroundColor": "#2c2c3e", "color": TEXT,
+                "backgroundColor": COLORS["card_solid"],
+                "color": COLORS["text_dim"],
                 "fontWeight": "600", "border": "none",
+                "fontSize": "11px", "letterSpacing": "0.8px",
+                "textTransform": "uppercase", "padding": "12px 16px",
+                "borderBottom": f"1px solid {COLORS['divider']}",
             },
             style_cell={
-                "backgroundColor": CARD_BG, "color": TEXT,
-                "border": "1px solid #2c2c3e", "padding": "10px",
-                "fontSize": "0.85rem",
+                "backgroundColor": COLORS["card_solid"],
+                "color": COLORS["text"],
+                "border": f"1px solid {COLORS['divider']}",
+                "padding": "12px 16px", "fontSize": "0.85rem",
+                "fontFamily": "'JetBrains Mono', monospace",
             },
             style_data_conditional=[
-                {"if": {"filter_query": "{unrealized_profit} > 0", "column_id": "unrealized_profit"},
-                 "color": ACCENT, "fontWeight": "bold"},
-                {"if": {"filter_query": "{unrealized_profit} < 0", "column_id": "unrealized_profit"},
-                 "color": RED, "fontWeight": "bold"},
+                {"if": {"filter_query": "{unrealized_profit} > 0",
+                        "column_id": "unrealized_profit"},
+                 "color": COLORS["positive"], "fontWeight": "bold"},
+                {"if": {"filter_query": "{unrealized_profit} < 0",
+                        "column_id": "unrealized_profit"},
+                 "color": COLORS["negative"], "fontWeight": "bold"},
+                {"if": {"state": "active"},
+                 "backgroundColor": COLORS["accent_soft"],
+                 "border": f"1px solid {COLORS['accent']}"},
             ],
         )
+        pos_table = html.Div(pos_table, style={
+            **CARD_STYLE, "padding": "0", "overflow": "hidden"})
     else:
-        pos_table = html.Div(
-            "No open positions",
-            style={"background": CARD_BG, "borderRadius": "12px", "padding": "18px",
-                   "color": "#666", "textAlign": "center"},
-        )
+        pos_table = html.Div(children=[
+            html.Div("\U0001f4ed", style={"fontSize": "28px", "marginBottom": "8px", "opacity": "0.5"}),
+            html.Div("No open positions", style={"fontSize": "13px", "color": COLORS["text_dim"]}),
+        ], style={**CARD_STYLE, "textAlign": "center", "padding": "32px"})
 
-    # ── signal cards ──────────────────────────────────────────────────────
+    # Signal cards
     signal_cards = []
     if isinstance(sig_data, dict):
         for sym_key, sig in sig_data.items():
-            idx_trend = sig.get("idx_trend", "—")
+            idx_trend = sig.get("idx_trend", "\u2014")
             is_bull = idx_trend == "BULLISH"
-            trend_color = ACCENT if is_bull else RED
-            trend_bg = "#0d2f25" if is_bull else "#3a1212"
+            trend_color = COLORS["positive"] if is_bull else COLORS["negative"]
+            trend_bg = "rgba(0,210,160,0.08)" if is_bull else "rgba(255,107,107,0.08)"
+            trend_glow = COLORS["positive_glow"] if is_bull else COLORS["negative_glow"]
 
             ce = sig.get("ce", {})
             pe = sig.get("pe", {})
             idx = sig.get("idx", {})
-
             ce_cross = ce.get("crossover", [])
             pe_cross = pe.get("crossover", [])
             idx_cross = idx.get("crossover", [])
 
+            col_hdr = {"fontSize": "0.65rem", "color": COLORS["text_dim"],
+                       "fontWeight": "600", "letterSpacing": "0.5px"}
+            row_divider = html.Hr(style={
+                "border": "none",
+                "borderTop": f"1px solid {COLORS['divider']}",
+                "margin": "0"})
+
             card = html.Div(
                 style={
-                    "background": CARD_BG, "borderRadius": "12px",
-                    "marginBottom": "14px", "overflow": "hidden",
+                    "background": COLORS["card_solid"],
+                    "borderRadius": "14px", "marginBottom": "16px",
+                    "overflow": "hidden",
+                    "border": f"1px solid {COLORS['card_border']}",
+                    "boxShadow": f"0 4px 20px rgba(0,0,0,0.2), 0 0 30px {trend_glow}",
+                    "transition": "all 0.3s ease",
                 },
                 children=[
-                    # ── header bar ────────────────────────────────────────
-                    html.Div(
-                        style={
-                            "display": "flex", "justifyContent": "space-between",
-                            "alignItems": "center", "padding": "10px 16px",
-                            "background": trend_bg,
-                            "borderBottom": f"2px solid {trend_color}",
-                        },
-                        children=[
-                            html.Span(sym_key, style={
-                                "fontWeight": "700", "fontSize": "0.95rem",
-                            }),
-                            html.Span(
-                                f"{'📈' if is_bull else '📉'} {idx_trend}",
-                                style={
-                                    "color": trend_color, "fontWeight": "700",
-                                    "fontSize": "0.8rem",
-                                    "background": CARD_BG,
-                                    "padding": "2px 10px", "borderRadius": "10px",
-                                },
-                            ),
-                        ],
-                    ),
-                    # ── column headers ────────────────────────────────────
-                    html.Div(
-                        style={
-                            "display": "grid",
-                            "gridTemplateColumns": "60px 1fr 1fr 1fr",
-                            "gap": "8px", "padding": "8px 16px 0",
-                        },
-                        children=[
-                            html.Span("", style={"fontSize": "0.65rem"}),
-                            html.Span("POWER", style={
-                                "fontSize": "0.65rem", "color": "#666",
-                                "fontWeight": "600", "letterSpacing": "0.5px",
-                            }),
-                            html.Span("CANDLES", style={
-                                "fontSize": "0.65rem", "color": "#666",
-                                "fontWeight": "600", "letterSpacing": "0.5px",
-                            }),
-                            html.Span("CROSSOVER", style={
-                                "fontSize": "0.65rem", "color": "#666",
-                                "fontWeight": "600", "letterSpacing": "0.5px",
-                            }),
-                        ],
-                    ),
-                    # ── signal rows ───────────────────────────────────────
-                    html.Div(style={"padding": "0 16px 10px"}, children=[
-                        _signal_row("CE",  "🔵", "#5dade2",
-                                    ce.get("power", 0),
-                                    ce.get("list", []),
-                                    ce_cross),
-                        html.Hr(style={
-                            "border": "none", "borderTop": "1px solid #2c2c3e",
-                            "margin": "0",
-                        }),
-                        _signal_row("PE",  "🔴", "#e74c3c",
-                                    pe.get("power", 0),
-                                    pe.get("list", []),
-                                    pe_cross),
-                        html.Hr(style={
-                            "border": "none", "borderTop": "1px solid #2c2c3e",
-                            "margin": "0",
-                        }),
-                        _signal_row("IDX", "📊", "#f39c12",
-                                    idx.get("power", 0),
-                                    idx.get("list", []),
-                                    idx_cross),
+                    html.Div(style={
+                        "display": "flex", "justifyContent": "space-between",
+                        "alignItems": "center", "padding": "12px 18px",
+                        "background": trend_bg,
+                        "borderBottom": f"2px solid {trend_color}",
+                    }, children=[
+                        html.Span(sym_key, style={
+                            "fontWeight": "700", "fontSize": "0.95rem",
+                            "color": COLORS["text"], "letterSpacing": "1px"}),
+                        html.Span(
+                            ("📈 " if is_bull else "📉 ") + idx_trend,
+                            style={"color": trend_color, "fontWeight": "700",
+                                   "fontSize": "0.8rem",
+                                   "background": COLORS["card_solid"],
+                                   "padding": "3px 14px", "borderRadius": "20px",
+                                   "boxShadow": f"0 0 12px {trend_glow}"}),
                     ]),
-                    # ── footer timestamp ──────────────────────────────────
-                    html.Div(
-                        sig.get("timestamp", "—"),
-                        style={
-                            "fontSize": "0.65rem", "color": "#555",
-                            "padding": "4px 16px 8px", "textAlign": "right",
-                        },
-                    ),
+                    html.Div(style={
+                        "display": "grid", "gridTemplateColumns": "64px 1fr 1fr 1fr",
+                        "gap": "8px", "padding": "10px 18px 0",
+                    }, children=[
+                        html.Span(""),
+                        html.Span("POWER", style=col_hdr),
+                        html.Span("CANDLES", style=col_hdr),
+                        html.Span("CROSSOVER", style=col_hdr),
+                    ]),
+                    html.Div(style={"padding": "0 18px 12px"}, children=[
+                        _signal_row("CE", "\U0001f535", "#5dade2",
+                                    ce.get("power", 0), ce.get("list", []), ce_cross),
+                        row_divider,
+                        _signal_row("PE", "\U0001f534", "#ff6b6b",
+                                    pe.get("power", 0), pe.get("list", []), pe_cross),
+                        row_divider,
+                        _signal_row("IDX", "\U0001f4ca", "#ffd93d",
+                                    idx.get("power", 0), idx.get("list", []), idx_cross),
+                    ]),
+                    # Legend
+                    html.Div(style={
+                        "padding": "8px 18px 10px",
+                        "borderTop": f"1px solid {COLORS['divider']}",
+                        "display": "flex", "flexWrap": "wrap",
+                        "gap": "14px", "alignItems": "center",
+                    }, children=[
+                        html.Span("LEGEND", style={
+                            "fontSize": "0.6rem", "color": COLORS["text_dim"],
+                            "fontWeight": "700", "letterSpacing": "1px", "marginRight": "4px"}),
+                        html.Div([
+                            html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
+                                             "borderRadius": "50%", "background": "#00d2a0",
+                                             "marginRight": "4px", "verticalAlign": "middle"}),
+                            html.Span("Bull", style={"fontSize": "0.65rem", "color": COLORS["text_secondary"]}),
+                        ], style={"display": "inline-flex", "alignItems": "center"}),
+                        html.Div([
+                            html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
+                                             "borderRadius": "50%", "background": "#e74c3c",
+                                             "marginRight": "4px", "verticalAlign": "middle"}),
+                            html.Span("Bear", style={"fontSize": "0.65rem", "color": COLORS["text_secondary"]}),
+                        ], style={"display": "inline-flex", "alignItems": "center"}),
+                        html.Span("\u2502", style={"color": COLORS["text_muted"], "fontSize": "0.75rem"}),
+                        html.Div([
+                            html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
+                                             "borderRadius": "50%", "background": "#4de8c8", "marginRight": "3px"}),
+                            html.Span("Weak", style={"fontSize": "0.6rem", "color": COLORS["text_dim"], "marginRight": "6px"}),
+                            html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
+                                             "borderRadius": "50%", "background": "#00d2a0", "marginRight": "3px"}),
+                            html.Span("Mid", style={"fontSize": "0.6rem", "color": COLORS["text_dim"], "marginRight": "6px"}),
+                            html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
+                                             "borderRadius": "50%", "background": "#009d7a", "marginRight": "3px"}),
+                            html.Span("Strong", style={"fontSize": "0.6rem", "color": COLORS["text_dim"]}),
+                        ], style={"display": "inline-flex", "alignItems": "center"}),
+                    ]),
+                    html.Div(sig.get("timestamp", "\u2014"), style={
+                        "fontSize": "0.65rem", "color": COLORS["text_muted"],
+                        "padding": "4px 18px 10px", "textAlign": "right",
+                        "fontFamily": "'JetBrains Mono', monospace"}),
                 ],
             )
             signal_cards.append(card)
 
     if not signal_cards:
-        signal_cards = [html.Div(
-            "No signal data yet",
-            style={"background": CARD_BG, "borderRadius": "12px", "padding": "18px",
-                   "color": "#666", "textAlign": "center"},
-        )]
+        signal_cards = [html.Div(children=[
+            html.Div("\u26a1", style={"fontSize": "28px", "marginBottom": "8px", "opacity": "0.5"}),
+            html.Div("No signal data yet", style={"fontSize": "13px", "color": COLORS["text_dim"]}),
+        ], style={**CARD_STYLE, "textAlign": "center", "padding": "32px"})]
 
-    # ── strategy log (timeline view) ─────────────────────────────────────
+    # Strategy log
     log_entries = []
     if isinstance(log_data, list):
         for entry in reversed(log_data[-50:]):
@@ -681,69 +957,56 @@ def refresh_dashboard(_n, selected_mode):
             ts_short = ts_raw.split(" ")[-1] if " " in ts_raw else ts_raw
             qty_val = entry.get("qty", 0)
             pl_val = entry.get("pl", 0)
-            details = entry.get("details", "")
 
-            # Skip ANALYSIS entries for a cleaner log
             if action == "ANALYSIS":
                 continue
 
-            # P&L indicator
             pl_children = []
             if pl_val != 0:
-                pl_col = ACCENT if pl_val > 0 else RED
+                pl_col = COLORS["positive"] if pl_val > 0 else COLORS["negative"]
                 pl_children = [html.Span(
-                    f"₹{pl_val:,.0f}",
-                    style={"color": pl_col, "fontWeight": "700", "fontSize": "0.75rem"},
-                )]
+                    f"\u20b9{pl_val:,.0f}",
+                    style={"color": pl_col, "fontWeight": "700", "fontSize": "0.78rem",
+                           "fontFamily": "'JetBrains Mono', monospace"})]
 
-            row = html.Div(
-                style={
-                    "display": "grid",
-                    "gridTemplateColumns": "52px 1fr auto",
-                    "gap": "8px", "alignItems": "start",
-                    "padding": "7px 0",
-                    "borderBottom": "1px solid #1a1a2e",
-                },
-                children=[
-                    # time column
-                    html.Span(ts_short, style={
-                        "color": "#555", "fontSize": "0.68rem",
-                        "fontFamily": "monospace", "paddingTop": "2px",
-                    }),
-                    # main content
-                    html.Div(children=[
-                        html.Div(
-                            style={"display": "flex", "gap": "6px",
-                                   "alignItems": "center", "flexWrap": "wrap"},
-                            children=[
-                                _action_badge(action),
-                                html.Span(leg, style={
-                                    "color": "#5dade2" if leg == "CE" else "#e74c3c" if leg == "PE" else "#f39c12",
-                                    "fontWeight": "700", "fontSize": "0.72rem",
-                                }) if leg and leg not in ("EVAL", "CHECK") else None,
-                                html.Span(sym_short, style={
-                                    "color": "#888", "fontSize": "0.7rem",
-                                }) if sym_short else None,
-                            ],
-                        ),
-                        html.Span(
-                            f"qty: {qty_val}" if qty_val else "",
-                            style={"color": "#666", "fontSize": "0.68rem"},
-                        ) if qty_val else None,
+            leg_color = "#5dade2" if leg == "CE" else "#ff6b6b" if leg == "PE" else "#ffd93d"
+
+            row = html.Div(style={
+                "display": "grid", "gridTemplateColumns": "56px 1fr auto",
+                "gap": "8px", "alignItems": "start", "padding": "9px 0",
+                "borderBottom": f"1px solid {COLORS['divider']}",
+            }, children=[
+                html.Span(ts_short, style={
+                    "color": COLORS["text_muted"], "fontSize": "0.7rem",
+                    "fontFamily": "'JetBrains Mono', monospace", "paddingTop": "2px"}),
+                html.Div(children=[
+                    html.Div(style={"display": "flex", "gap": "6px",
+                                    "alignItems": "center", "flexWrap": "wrap"}, children=[
+                        _action_badge(action),
+                        html.Span(leg, style={"color": leg_color, "fontWeight": "700",
+                                              "fontSize": "0.74rem"})
+                            if leg and leg not in ("EVAL", "CHECK") else None,
+                        html.Span(sym_short, style={"color": COLORS["text_dim"],
+                                                    "fontSize": "0.72rem",
+                                                    "fontFamily": "'JetBrains Mono', monospace"})
+                            if sym_short else None,
                     ]),
-                    # P&L column
-                    html.Div(children=pl_children,
-                             style={"textAlign": "right", "minWidth": "50px"}),
-                ],
-            )
+                    html.Span(f"qty: {qty_val}" if qty_val else "", style={
+                        "color": COLORS["text_muted"], "fontSize": "0.68rem",
+                        "fontFamily": "'JetBrains Mono', monospace"})
+                        if qty_val else None,
+                ]),
+                html.Div(children=pl_children, style={"textAlign": "right", "minWidth": "55px"}),
+            ])
             log_entries.append(row)
 
     if not log_entries:
-        log_entries = [html.Div("No strategy events yet",
-                                style={"color": "#666", "textAlign": "center",
-                                       "padding": "20px"})]
+        log_entries = [html.Div(children=[
+            html.Div("\U0001f4dd", style={"fontSize": "24px", "marginBottom": "8px", "opacity": "0.5"}),
+            html.Div("No strategy events yet", style={"fontSize": "13px"}),
+        ], style={"color": COLORS["text_dim"], "textAlign": "center", "padding": "32px"})]
 
-    # ── daily trading stats (from position tracker) ───────────────────────
+    # Daily trading stats
     daily_closes = 0
     daily_booked = 0.0
     daily_martingales = 0
@@ -755,43 +1018,35 @@ def refresh_dashboard(_n, selected_mode):
             daily_booked += _v.get("total_profit_closed", 0.0)
             daily_martingales += _v.get("martingale_count", 0)
     daily_avg = daily_booked / max(daily_closes, 1)
-    booked_color = ACCENT if daily_booked >= 0 else RED
+    booked_color = COLORS["positive"] if daily_booked >= 0 else COLORS["negative"]
 
     daily_stats_cards = [
-        _kpi_card("Today's Booked Profit", f"₹{daily_booked:,.2f}", booked_color),
-        _kpi_card("Avg Profit / Close", f"₹{daily_avg:,.2f}",
-                  ACCENT if daily_avg > 0 else RED),
-        _kpi_card("Closes Today", str(daily_closes)),
+        _kpi_card("Today's Booked Profit", f"\u20b9{daily_booked:,.2f}", booked_color, icon="\U0001f3e6"),
+        _kpi_card("Avg Profit / Close", f"\u20b9{daily_avg:,.2f}",
+                  COLORS["positive"] if daily_avg > 0 else COLORS["negative"], icon="\U0001f4c9"),
+        _kpi_card("Closes Today", str(daily_closes), COLORS["accent"], icon="\u2705"),
         _kpi_card("Martingale Adds", str(daily_martingales),
-                  "#9b59b6" if daily_martingales > 0 else "#666"),
+                  "#9b59b6" if daily_martingales > 0 else COLORS["text_dim"], icon="\u26a1"),
     ]
 
-    # ── profit history line chart ─────────────────────────────────────────
     profit_fig = _build_profit_chart(history_data)
 
     return (
-        status_text,
-        mode_text,
-        f"Last updated: {last_ts}",
-        kpi_cards,
-        pos_table,
-        signal_cards,
-        log_entries,
-        daily_stats_cards,
-        profit_fig,
+        status_text, mode_text, f"Last updated: {last_ts}",
+        kpi_cards, pos_table, signal_cards, log_entries,
+        daily_stats_cards, profit_fig,
     )
 
 
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 #  MAIN
-# ═══════════════════════════════════════════════════════════════════════════════
+# ======================================================================
 
 if __name__ == "__main__":
-    # Ensure both state directories exist so dashboard doesn't crash on first load
     STATE_DIR_DEMO.mkdir(parents=True, exist_ok=True)
     STATE_DIR_LIVE.mkdir(parents=True, exist_ok=True)
 
-    print(f"📊 Ballom FYR Dashboard starting on http://127.0.0.1:{_port_arg}")
+    print(f"\U0001f4ca Ballom FYR Dashboard starting on http://127.0.0.1:{_port_arg}")
     print(f"   Monitoring mode: {ACTIVE_MODE.upper()}")
     print(f"   State dir: {get_state_dir(ACTIVE_MODE)}")
     print(f"   (Use the dropdown to switch between DEMO / LIVE)\n")
