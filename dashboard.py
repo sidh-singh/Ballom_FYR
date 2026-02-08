@@ -116,23 +116,33 @@ def _kpi_card(title: str, value: str, color: str = "#18bc9c") -> html.Div:
     )
 
 
-def _crossover_badge(val: int) -> html.Span:
-    """Return a compact colored badge for a crossover value."""
-    cfg = {
-        3:  ("🔥 +3", "#18bc9c", "#0d2f25"),
-        2:  ("⚡ +2", "#27ae60", "#122a1c"),
-        1:  ("💨 +1", "#5dade2", "#152a3a"),
-        -1: ("💨 −1", "#f5b041", "#3a2c12"),
-        -2: ("⚡ −2", "#e67e22", "#3a2412"),
-        -3: ("🔥 −3", "#e74c3c", "#3a1212"),
-    }
-    emoji_txt, color, bg = cfg.get(val, (str(val), "#888", "#222"))
-    return html.Span(emoji_txt, style={
-        "color": color, "background": bg,
-        "padding": "2px 8px", "borderRadius": "10px",
-        "fontSize": "0.78rem", "fontWeight": "600",
-        "whiteSpace": "nowrap",
-    })
+def _crossover_dots(cross_list: list, max_items: int = 7) -> html.Div:
+    """Render a crossover list as 7 rectangular bar segments (like Power).
+
+    Each value in cross_list is in {-3, -2, -1, 0, 1, 2, 3}.
+    Positive → green shades  (1 = light, 2 = medium, 3 = dark)
+    Negative → red shades    (−1 = light, −2 = medium, −3 = dark)
+    Zero     → dim placeholder
+    """
+    green_shades = {1: "#82e0aa", 2: "#27ae60", 3: "#0d6b3a"}  # light, med, dark
+    red_shades   = {1: "#f1948a", 2: "#e74c3c", 3: "#922b21"}
+
+    bars = []
+    for i in range(max_items):
+        v = cross_list[i] if i < len(cross_list) else 0
+        if v > 0:
+            c = green_shades.get(min(abs(v), 3), "#82e0aa")
+        elif v < 0:
+            c = red_shades.get(min(abs(v), 3), "#f1948a")
+        else:
+            c = "#2c2c3e"
+        bars.append(html.Span(style={
+            "display": "inline-block", "width": "8px", "height": "16px",
+            "borderRadius": "2px", "background": c,
+            "marginRight": "2px",
+        }))
+
+    return html.Div(bars, style={"display": "inline-flex", "alignItems": "center"})
 
 
 def _power_bar(power: int, max_power: int = 7) -> html.Div:
@@ -172,7 +182,7 @@ def _list_dots(lst: list, max_items: int = 7) -> html.Div:
 
 
 def _signal_row(label: str, icon: str, color: str,
-                power: int, lst: list, cross_val: int) -> html.Div:
+                power: int, lst: list, cross_list: list) -> html.Div:
     """One compact row for CE / PE / IDX in the signal card."""
     return html.Div(
         style={
@@ -187,7 +197,7 @@ def _signal_row(label: str, icon: str, color: str,
             }),
             _power_bar(power),
             _list_dots(lst),
-            _crossover_badge(cross_val),
+            _crossover_dots(cross_list),
         ],
     )
 
@@ -561,9 +571,9 @@ def refresh_dashboard(_n, selected_mode):
             pe = sig.get("pe", {})
             idx = sig.get("idx", {})
 
-            ce_cross = ce.get("crossover", [0])[0] if ce.get("crossover") else 0
-            pe_cross = pe.get("crossover", [0])[0] if pe.get("crossover") else 0
-            idx_cross = idx.get("crossover", [0])[0] if idx.get("crossover") else 0
+            ce_cross = ce.get("crossover", [])
+            pe_cross = pe.get("crossover", [])
+            idx_cross = idx.get("crossover", [])
 
             card = html.Div(
                 style={
@@ -611,7 +621,7 @@ def refresh_dashboard(_n, selected_mode):
                                 "fontSize": "0.65rem", "color": "#666",
                                 "fontWeight": "600", "letterSpacing": "0.5px",
                             }),
-                            html.Span("CROSS", style={
+                            html.Span("CROSSOVER", style={
                                 "fontSize": "0.65rem", "color": "#666",
                                 "fontWeight": "600", "letterSpacing": "0.5px",
                             }),
