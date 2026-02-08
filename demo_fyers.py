@@ -47,7 +47,8 @@ TRADES_FILE      = DEMO_STORAGE / "demo_trades.json"
 ACCOUNT_FILE     = DEMO_STORAGE / "demo_account.json"
 HISTORY_FILE     = DEMO_STORAGE / "demo_trade_history.json"
 DAILY_PNL_FILE   = DEMO_STORAGE / "demo_daily_pnl.json"
-LOGS_DIR         = DEMO_STORAGE / "logs"
+LOGS_DIR                = DEMO_STORAGE / "logs"
+REALIZED_BY_SYMBOL_FILE = DEMO_STORAGE / "demo_realized_by_symbol.json"
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -121,6 +122,7 @@ class DemoFyers(Fyers):
         self.account: DemoAccount = self._load_account()
         self.demo_positions: Dict[str, DemoPosition] = self._load_positions()
         self.trades: List[DemoTrade] = self._load_trades()
+        self._symbol_realized: Dict[str, float] = self._load_symbol_realized()
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  STORAGE HELPERS                                                         ║
@@ -149,6 +151,26 @@ class DemoFyers(Fyers):
         if isinstance(obj, np.ndarray):
             return obj.tolist()
         return obj
+
+    # ── per-symbol cumulative realized (resets daily) ──────────────────────
+
+    def _load_symbol_realized(self) -> Dict[str, float]:
+        """Load per-symbol cumulative realized P&L — resets at day change."""
+        if REALIZED_BY_SYMBOL_FILE.exists():
+            try:
+                with open(REALIZED_BY_SYMBOL_FILE, "r") as f:
+                    data = json.load(f)
+                if data.get("_date") != datetime.now().strftime("%Y-%m-%d"):
+                    return {"_date": datetime.now().strftime("%Y-%m-%d")}
+                return data
+            except Exception:
+                pass
+        return {"_date": datetime.now().strftime("%Y-%m-%d")}
+
+    def _save_symbol_realized(self) -> None:
+        self._symbol_realized["_date"] = datetime.now().strftime("%Y-%m-%d")
+        with open(REALIZED_BY_SYMBOL_FILE, "w") as f:
+            json.dump(self._symbol_realized, f, indent=2)
 
     # ── account ────────────────────────────────────────────────────────────────
 
@@ -314,6 +336,9 @@ class DemoFyers(Fyers):
                     else:
                         self.account.losing_trades += 1
 
+                    # Track per-symbol cumulative realized for position API
+                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
+
                     leftover = qty - close_qty
                     if leftover > 0:
                         self.demo_positions[key] = DemoPosition(
@@ -342,6 +367,7 @@ class DemoFyers(Fyers):
             self.account.total_trades += 1
             self._save_positions()
             self._save_account()
+            self._save_symbol_realized()
 
         trade = DemoTrade(
             trade_id=str(uuid.uuid4())[:8], symbol=symbol, side=1,
@@ -397,6 +423,9 @@ class DemoFyers(Fyers):
                     else:
                         self.account.losing_trades += 1
 
+                    # Track per-symbol cumulative realized for position API
+                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
+
                     leftover = qty - close_qty
                     if leftover > 0:
                         self.demo_positions[key] = DemoPosition(
@@ -425,6 +454,7 @@ class DemoFyers(Fyers):
             self.account.total_trades += 1
             self._save_positions()
             self._save_account()
+            self._save_symbol_realized()
 
         trade = DemoTrade(
             trade_id=str(uuid.uuid4())[:8], symbol=symbol, side=-1,
@@ -463,6 +493,12 @@ class DemoFyers(Fyers):
             pos.unrealized_pl = unrealized
             total_unrealized += unrealized
 
+            # Cumulative realized P&L for this symbol (matches Fyers API behavior)
+            _sym_key = f"{pos.symbol}_{pos.product_type}"
+            _cum_realized = self._symbol_realized.get(_sym_key, 0.0)
+            if isinstance(_cum_realized, str):
+                _cum_realized = 0.0  # skip "_date" key
+
             rows.append({
                 "symbol": pos.symbol,
                 "id": pos.position_id,
@@ -475,8 +511,8 @@ class DemoFyers(Fyers):
                 "side": pos.side,
                 "qty": pos.qty,
                 "productType": pos.product_type,
-                "realized_profit": pos.realized_pl,
-                "pl": unrealized,
+                "realized_profit": _cum_realized,
+                "pl": _cum_realized + unrealized,
                 "crossCurrency": "N",
                 "rbiRefRate": 0,
                 "qtyMulti_com": 1,

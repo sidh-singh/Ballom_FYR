@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import sys
+from datetime import datetime
 from pathlib import Path
 
 import dash
@@ -58,11 +59,13 @@ def _resolve_state_paths(mode: str) -> dict:
     """Return a dict of state-file Path objects for the given mode."""
     d = get_state_dir(mode)
     return {
-        "app_status":     d / "app_status.json",
-        "signal_state":   d / "signal_state.json",
-        "position_state": d / "position_state.json",
-        "account_state":  d / "account_state.json",
-        "strategy_log":   d / "strategy_log.json",
+        "app_status":        d / "app_status.json",
+        "signal_state":      d / "signal_state.json",
+        "position_state":    d / "position_state.json",
+        "account_state":     d / "account_state.json",
+        "strategy_log":      d / "strategy_log.json",
+        "position_tracker":  d / "position_tracker.json",
+        "profit_history":    d / "profit_history.json",
     }
 
 
@@ -113,33 +116,211 @@ def _kpi_card(title: str, value: str, color: str = "#18bc9c") -> html.Div:
     )
 
 
-def _crossover_badge(val: int) -> str:
-    """Return emoji + label for a crossover value."""
-    mapping = {
-        3: "🔥 Strong Bull (+3)",
-        2: "⚡ Mid Bull (+2)",
-        1: "💨 Weak Bull (+1)",
-        -1: "💨 Weak Bear (-1)",
-        -2: "⚡ Mid Bear (-2)",
-        -3: "🔥 Strong Bear (-3)",
+def _crossover_badge(val: int) -> html.Span:
+    """Return a compact colored badge for a crossover value."""
+    cfg = {
+        3:  ("🔥 +3", "#18bc9c", "#0d2f25"),
+        2:  ("⚡ +2", "#27ae60", "#122a1c"),
+        1:  ("💨 +1", "#5dade2", "#152a3a"),
+        -1: ("💨 −1", "#f5b041", "#3a2c12"),
+        -2: ("⚡ −2", "#e67e22", "#3a2412"),
+        -3: ("🔥 −3", "#e74c3c", "#3a1212"),
     }
-    return mapping.get(val, str(val))
+    emoji_txt, color, bg = cfg.get(val, (str(val), "#888", "#222"))
+    return html.Span(emoji_txt, style={
+        "color": color, "background": bg,
+        "padding": "2px 8px", "borderRadius": "10px",
+        "fontSize": "0.78rem", "fontWeight": "600",
+        "whiteSpace": "nowrap",
+    })
 
 
-def _power_bar(power: int, max_power: int = 7) -> go.Figure:
-    """Horizontal bar gauge for power (0-7)."""
-    color = "#18bc9c" if power >= 5 else "#f39c12" if power >= 3 else "#e74c3c"
-    fig = go.Figure(go.Bar(
-        x=[power], y=[""], orientation="h",
-        marker_color=color, text=[f"{power}/{max_power}"], textposition="auto",
-    ))
+def _power_bar(power: int, max_power: int = 7) -> html.Div:
+    """Compact inline power gauge with colored segments."""
+    dots = []
+    for i in range(max_power):
+        if i < power:
+            c = "#18bc9c" if power >= 5 else "#f39c12" if power >= 3 else "#e74c3c"
+        else:
+            c = "#2c2c3e"
+        dots.append(html.Span(style={
+            "display": "inline-block", "width": "8px", "height": "16px",
+            "borderRadius": "2px", "background": c, "marginRight": "2px",
+        }))
+    return html.Div(
+        children=[*dots, html.Span(f" {power}", style={
+            "fontSize": "0.75rem", "fontWeight": "700", "marginLeft": "4px",
+            "color": "#18bc9c" if power >= 5 else "#f39c12" if power >= 3 else "#e74c3c",
+        })],
+        style={"display": "inline-flex", "alignItems": "center"},
+    )
+
+
+def _list_dots(lst: list, max_items: int = 7) -> html.Div:
+    """Render the bullish/bearish list as colored circle dots."""
+    dots = []
+    for i, v in enumerate(lst[:max_items]):
+        is_bull = v == 1
+        c = "#18bc9c" if is_bull else "#e74c3c"
+        opacity = 1.0 - (i * 0.08)
+        dots.append(html.Span(style={
+            "display": "inline-block", "width": "10px", "height": "10px",
+            "borderRadius": "50%", "background": c,
+            "marginRight": "3px", "opacity": str(opacity),
+        }))
+    return html.Div(dots, style={"display": "inline-flex", "alignItems": "center"})
+
+
+def _signal_row(label: str, icon: str, color: str,
+                power: int, lst: list, cross_val: int) -> html.Div:
+    """One compact row for CE / PE / IDX in the signal card."""
+    return html.Div(
+        style={
+            "display": "grid",
+            "gridTemplateColumns": "60px 1fr 1fr 1fr",
+            "gap": "8px", "alignItems": "center",
+            "padding": "6px 0",
+        },
+        children=[
+            html.Span(f"{icon} {label}", style={
+                "fontWeight": "700", "fontSize": "0.8rem", "color": color,
+            }),
+            _power_bar(power),
+            _list_dots(lst),
+            _crossover_badge(cross_val),
+        ],
+    )
+
+
+def _action_badge(action: str) -> html.Span:
+    """Compact colored pill badge for a strategy action."""
+    act_upper = action.upper()
+    if "MARTINGALE" in act_upper:
+        bg, fg = "#9b59b6", "#f0e6f6"
+        icon = "⚡"
+    elif "EXIT" in act_upper or "CLOSE" in act_upper:
+        if "PROFIT" in act_upper:
+            bg, fg = "#18bc9c", "#0d2f25"
+            icon = "💰"
+        elif "ADVERSE" in act_upper:
+            bg, fg = "#e67e22", "#3a2412"
+            icon = "⚠️"
+        else:
+            bg, fg = "#3498db", "#12283a"
+            icon = "🔄"
+    elif "BUY" in act_upper:
+        bg, fg = "#27ae60", "#122a1c"
+        icon = "🟢"
+    elif "SELL" in act_upper:
+        bg, fg = "#e74c3c", "#3a1212"
+        icon = "🔴"
+    elif "ANALYSIS" in act_upper or "EVAL" in act_upper:
+        bg, fg = "#34495e", "#bdc3c7"
+        icon = "🔍"
+    elif "BLOCKED" in act_upper or "BRAKE" in act_upper:
+        bg, fg = "#7f8c8d", "#ecf0f1"
+        icon = "🚫"
+    else:
+        bg, fg = "#2c3e50", "#bdc3c7"
+        icon = "📌"
+    return html.Span(f"{icon} {action}", style={
+        "background": bg, "color": fg,
+        "padding": "2px 8px", "borderRadius": "8px",
+        "fontSize": "0.7rem", "fontWeight": "600",
+        "whiteSpace": "nowrap",
+    })
+
+
+def _build_profit_chart(history_data: list) -> go.Figure:
+    """Build a Plotly line chart of effective P&L over time per symbol."""
+    empty_layout = dict(
+        template="plotly_dark",
+        paper_bgcolor="#121225",
+        plot_bgcolor="#1e1e2f",
+        height=300,
+        margin=dict(l=40, r=20, t=10, b=40),
+    )
+
+    if not history_data:
+        fig = go.Figure()
+        fig.update_layout(**empty_layout)
+        fig.add_annotation(text="No profit data yet", showarrow=False,
+                           font=dict(size=14, color="#666"),
+                           xref="paper", yref="paper", x=0.5, y=0.5)
+        return fig
+
+    today = datetime.now().strftime("%Y-%m-%d")
+    today_data = [
+        e for e in history_data
+        if e.get("date") == today
+        and e.get("action") in ("SNAPSHOT", "CLOSE", "MARTINGALE")
+    ]
+
+    if not today_data:
+        fig = go.Figure()
+        fig.update_layout(**empty_layout)
+        fig.add_annotation(text="No data for today yet", showarrow=False,
+                           font=dict(size=14, color="#666"),
+                           xref="paper", yref="paper", x=0.5, y=0.5)
+        return fig
+
+    # Group by symbol
+    symbols: dict = {}
+    for entry in today_data:
+        sym = entry.get("symbol", "")
+        if sym not in symbols:
+            symbols[sym] = {
+                "x": [], "y": [],
+                "close_x": [], "close_y": [],
+                "mg_x": [], "mg_y": [],
+            }
+        symbols[sym]["x"].append(entry["timestamp"])
+        symbols[sym]["y"].append(entry.get("effective_pl", 0))
+        if entry["action"] == "CLOSE":
+            symbols[sym]["close_x"].append(entry["timestamp"])
+            symbols[sym]["close_y"].append(entry.get("effective_pl", 0))
+        elif entry["action"] == "MARTINGALE":
+            symbols[sym]["mg_x"].append(entry["timestamp"])
+            symbols[sym]["mg_y"].append(entry.get("effective_pl", 0))
+
+    fig = go.Figure()
+    colors = ["#18bc9c", "#e74c3c", "#f39c12", "#3498db", "#9b59b6", "#1abc9c"]
+
+    for i, (sym, data) in enumerate(symbols.items()):
+        color = colors[i % len(colors)]
+        short_name = sym.split(":")[-1] if ":" in sym else sym
+
+        fig.add_trace(go.Scatter(
+            x=data["x"], y=data["y"],
+            mode="lines",
+            name=short_name,
+            line=dict(color=color, width=2),
+        ))
+
+        if data["close_x"]:
+            fig.add_trace(go.Scatter(
+                x=data["close_x"], y=data["close_y"],
+                mode="markers",
+                name=f"{short_name} ★ close",
+                marker=dict(color=color, size=10, symbol="star"),
+                showlegend=False,
+            ))
+
+        if data["mg_x"]:
+            fig.add_trace(go.Scatter(
+                x=data["mg_x"], y=data["mg_y"],
+                mode="markers",
+                name=f"{short_name} ◆ martingale",
+                marker=dict(color="#9b59b6", size=9, symbol="diamond"),
+                showlegend=False,
+            ))
+
+    fig.add_hline(y=0, line_dash="dash", line_color="#666", opacity=0.5)
     fig.update_layout(
-        xaxis=dict(range=[0, max_power], showticklabels=False, showgrid=False),
-        yaxis=dict(showticklabels=False),
-        margin=dict(l=0, r=0, t=0, b=0),
-        height=30,
-        paper_bgcolor="rgba(0,0,0,0)",
-        plot_bgcolor="rgba(0,0,0,0)",
+        **empty_layout,
+        xaxis=dict(title="Time", showgrid=True, gridcolor="#2c2c3e"),
+        yaxis=dict(title="Effective P&L (₹)", showgrid=True, gridcolor="#2c2c3e"),
+        legend=dict(orientation="h", y=-0.25),
     )
     return fig
 
@@ -208,6 +389,24 @@ app.layout = html.Div(
             style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "24px"},
         ),
 
+        # ── daily trading stats ───────────────────────────────────────────
+        html.Div(
+            id="daily-stats-row",
+            style={"display": "flex", "gap": "16px", "flexWrap": "wrap", "marginBottom": "24px"},
+        ),
+
+        # ── profit history chart ──────────────────────────────────────────
+        html.Div(
+            style={
+                "background": "#1e1e2f", "borderRadius": "12px",
+                "padding": "16px", "marginBottom": "24px",
+            },
+            children=[
+                html.H4("📈 Profit History", style={"marginBottom": "10px"}),
+                dcc.Graph(id="profit-chart", config={"displayModeBar": False}),
+            ],
+        ),
+
         # ── two-column layout ─────────────────────────────────────────────
         html.Div(
             style={"display": "flex", "gap": "20px", "flexWrap": "wrap"},
@@ -265,6 +464,8 @@ app.layout = html.Div(
         Output("positions-table-container", "children"),
         Output("signal-cards-container", "children"),
         Output("strategy-log-container", "children"),
+        Output("daily-stats-row", "children"),
+        Output("profit-chart", "figure"),
     ],
     [Input("refresh-timer", "n_intervals"),
      Input("mode-selector", "value")],
@@ -278,6 +479,9 @@ def refresh_dashboard(_n, selected_mode):
     pos_data = _read(paths["position_state"])
     sig_data = _read(paths["signal_state"])
     log_data = _read(paths["strategy_log"])
+    tracker_data = _read(paths["position_tracker"])
+    history_raw = _read(paths["profit_history"])
+    history_data = history_raw if isinstance(history_raw, list) else []
 
     # ── header badges ─────────────────────────────────────────────────────
     status_text = app_data.get("status", "offline").upper()
@@ -349,82 +553,100 @@ def refresh_dashboard(_n, selected_mode):
     if isinstance(sig_data, dict):
         for sym_key, sig in sig_data.items():
             idx_trend = sig.get("idx_trend", "—")
-            trend_color = ACCENT if idx_trend == "BULLISH" else RED
+            is_bull = idx_trend == "BULLISH"
+            trend_color = ACCENT if is_bull else RED
+            trend_bg = "#0d2f25" if is_bull else "#3a1212"
 
             ce = sig.get("ce", {})
             pe = sig.get("pe", {})
             idx = sig.get("idx", {})
 
-            ce_cross_val = ce.get("crossover", [0])[0] if ce.get("crossover") else 0
-            pe_cross_val = pe.get("crossover", [0])[0] if pe.get("crossover") else 0
-            idx_cross_val = idx.get("crossover", [0])[0] if idx.get("crossover") else 0
+            ce_cross = ce.get("crossover", [0])[0] if ce.get("crossover") else 0
+            pe_cross = pe.get("crossover", [0])[0] if pe.get("crossover") else 0
+            idx_cross = idx.get("crossover", [0])[0] if idx.get("crossover") else 0
 
             card = html.Div(
                 style={
-                    "background": CARD_BG, "borderRadius": "12px", "padding": "16px",
-                    "marginBottom": "14px", "borderLeft": f"4px solid {trend_color}",
+                    "background": CARD_BG, "borderRadius": "12px",
+                    "marginBottom": "14px", "overflow": "hidden",
                 },
                 children=[
+                    # ── header bar ────────────────────────────────────────
                     html.Div(
-                        style={"display": "flex", "justifyContent": "space-between", "alignItems": "center"},
+                        style={
+                            "display": "flex", "justifyContent": "space-between",
+                            "alignItems": "center", "padding": "10px 16px",
+                            "background": trend_bg,
+                            "borderBottom": f"2px solid {trend_color}",
+                        },
                         children=[
-                            html.H5(sym_key, style={"margin": 0}),
+                            html.Span(sym_key, style={
+                                "fontWeight": "700", "fontSize": "0.95rem",
+                            }),
                             html.Span(
-                                f"{'📈' if idx_trend == 'BULLISH' else '📉'} {idx_trend}",
-                                style={"color": trend_color, "fontWeight": "bold", "fontSize": "0.9rem"},
+                                f"{'📈' if is_bull else '📉'} {idx_trend}",
+                                style={
+                                    "color": trend_color, "fontWeight": "700",
+                                    "fontSize": "0.8rem",
+                                    "background": CARD_BG,
+                                    "padding": "2px 10px", "borderRadius": "10px",
+                                },
                             ),
                         ],
                     ),
-                    html.P(f"Updated: {sig.get('timestamp', '—')}",
-                           style={"color": "#666", "fontSize": "0.75rem", "margin": "4px 0 12px"}),
-
-                    # CE row
+                    # ── column headers ────────────────────────────────────
                     html.Div(
-                        style={"display": "flex", "gap": "16px", "marginBottom": "8px", "alignItems": "center"},
+                        style={
+                            "display": "grid",
+                            "gridTemplateColumns": "60px 1fr 1fr 1fr",
+                            "gap": "8px", "padding": "8px 16px 0",
+                        },
                         children=[
-                            html.Span("🔵 CE", style={"fontWeight": "bold", "width": "50px"}),
-                            html.Span(f"Power: {ce.get('power', 0)}/7", style={"width": "90px"}),
-                            html.Span(
-                                f"List: {''.join(str(x) for x in ce.get('list', [])[:7])}",
-                                style={"fontFamily": "monospace", "width": "120px"},
-                            ),
-                            html.Span(
-                                _crossover_badge(ce_cross_val),
-                                style={"fontSize": "0.85rem"},
-                            ),
+                            html.Span("", style={"fontSize": "0.65rem"}),
+                            html.Span("POWER", style={
+                                "fontSize": "0.65rem", "color": "#666",
+                                "fontWeight": "600", "letterSpacing": "0.5px",
+                            }),
+                            html.Span("CANDLES", style={
+                                "fontSize": "0.65rem", "color": "#666",
+                                "fontWeight": "600", "letterSpacing": "0.5px",
+                            }),
+                            html.Span("CROSS", style={
+                                "fontSize": "0.65rem", "color": "#666",
+                                "fontWeight": "600", "letterSpacing": "0.5px",
+                            }),
                         ],
                     ),
-                    # PE row
+                    # ── signal rows ───────────────────────────────────────
+                    html.Div(style={"padding": "0 16px 10px"}, children=[
+                        _signal_row("CE",  "🔵", "#5dade2",
+                                    ce.get("power", 0),
+                                    ce.get("list", []),
+                                    ce_cross),
+                        html.Hr(style={
+                            "border": "none", "borderTop": "1px solid #2c2c3e",
+                            "margin": "0",
+                        }),
+                        _signal_row("PE",  "🔴", "#e74c3c",
+                                    pe.get("power", 0),
+                                    pe.get("list", []),
+                                    pe_cross),
+                        html.Hr(style={
+                            "border": "none", "borderTop": "1px solid #2c2c3e",
+                            "margin": "0",
+                        }),
+                        _signal_row("IDX", "📊", "#f39c12",
+                                    idx.get("power", 0),
+                                    idx.get("list", []),
+                                    idx_cross),
+                    ]),
+                    # ── footer timestamp ──────────────────────────────────
                     html.Div(
-                        style={"display": "flex", "gap": "16px", "marginBottom": "8px", "alignItems": "center"},
-                        children=[
-                            html.Span("🔴 PE", style={"fontWeight": "bold", "width": "50px"}),
-                            html.Span(f"Power: {pe.get('power', 0)}/7", style={"width": "90px"}),
-                            html.Span(
-                                f"List: {''.join(str(x) for x in pe.get('list', [])[:7])}",
-                                style={"fontFamily": "monospace", "width": "120px"},
-                            ),
-                            html.Span(
-                                _crossover_badge(pe_cross_val),
-                                style={"fontSize": "0.85rem"},
-                            ),
-                        ],
-                    ),
-                    # Index row
-                    html.Div(
-                        style={"display": "flex", "gap": "16px", "alignItems": "center"},
-                        children=[
-                            html.Span("📊 IDX", style={"fontWeight": "bold", "width": "50px"}),
-                            html.Span(f"Power: {idx.get('power', 0)}/7", style={"width": "90px"}),
-                            html.Span(
-                                f"List: {''.join(str(x) for x in idx.get('list', [])[:7])}",
-                                style={"fontFamily": "monospace", "width": "120px"},
-                            ),
-                            html.Span(
-                                _crossover_badge(idx_cross_val),
-                                style={"fontSize": "0.85rem"},
-                            ),
-                        ],
+                        sig.get("timestamp", "—"),
+                        style={
+                            "fontSize": "0.65rem", "color": "#555",
+                            "padding": "4px 16px 8px", "textAlign": "right",
+                        },
                     ),
                 ],
             )
@@ -437,47 +659,105 @@ def refresh_dashboard(_n, selected_mode):
                    "color": "#666", "textAlign": "center"},
         )]
 
-    # ── strategy log ──────────────────────────────────────────────────────
+    # ── strategy log (timeline view) ─────────────────────────────────────
     log_entries = []
     if isinstance(log_data, list):
         for entry in reversed(log_data[-50:]):
             action = entry.get("action", "")
-            color = ACCENT if "BUY" in action else RED if "SELL" in action else YELLOW
+            leg = entry.get("leg", "")
+            sym_raw = entry.get("symbol", "")
+            sym_short = sym_raw.split(":")[-1] if ":" in sym_raw else sym_raw
+            ts_raw = entry.get("timestamp", "")
+            ts_short = ts_raw.split(" ")[-1] if " " in ts_raw else ts_raw
+            qty_val = entry.get("qty", 0)
+            pl_val = entry.get("pl", 0)
+            details = entry.get("details", "")
 
-            log_entries.append(html.Div(
+            # Skip ANALYSIS entries for a cleaner log
+            if action == "ANALYSIS":
+                continue
+
+            # P&L indicator
+            pl_children = []
+            if pl_val != 0:
+                pl_col = ACCENT if pl_val > 0 else RED
+                pl_children = [html.Span(
+                    f"₹{pl_val:,.0f}",
+                    style={"color": pl_col, "fontWeight": "700", "fontSize": "0.75rem"},
+                )]
+
+            row = html.Div(
                 style={
-                    "borderBottom": "1px solid #2c2c3e",
-                    "padding": "8px 0",
-                    "fontSize": "0.8rem",
+                    "display": "grid",
+                    "gridTemplateColumns": "52px 1fr auto",
+                    "gap": "8px", "alignItems": "start",
+                    "padding": "7px 0",
+                    "borderBottom": "1px solid #1a1a2e",
                 },
                 children=[
-                    html.Div(
-                        style={"display": "flex", "justifyContent": "space-between"},
-                        children=[
-                            html.Span(
-                                f"{entry.get('leg', '')} {action}",
-                                style={"color": color, "fontWeight": "600"},
-                            ),
-                            html.Span(
-                                entry.get("timestamp", ""),
-                                style={"color": "#666", "fontSize": "0.7rem"},
-                            ),
-                        ],
-                    ),
-                    html.Div(
-                        f"{entry.get('symbol', '')} | qty={entry.get('qty', 0)} | "
-                        f"P&L=₹{entry.get('pl', 0):,.2f}",
-                        style={"color": "#aaa", "fontSize": "0.75rem"},
-                    ),
-                    html.Div(
-                        entry.get("details", ""),
-                        style={"color": "#777", "fontSize": "0.72rem", "fontStyle": "italic"},
-                    ) if entry.get("details") else None,
+                    # time column
+                    html.Span(ts_short, style={
+                        "color": "#555", "fontSize": "0.68rem",
+                        "fontFamily": "monospace", "paddingTop": "2px",
+                    }),
+                    # main content
+                    html.Div(children=[
+                        html.Div(
+                            style={"display": "flex", "gap": "6px",
+                                   "alignItems": "center", "flexWrap": "wrap"},
+                            children=[
+                                _action_badge(action),
+                                html.Span(leg, style={
+                                    "color": "#5dade2" if leg == "CE" else "#e74c3c" if leg == "PE" else "#f39c12",
+                                    "fontWeight": "700", "fontSize": "0.72rem",
+                                }) if leg and leg not in ("EVAL", "CHECK") else None,
+                                html.Span(sym_short, style={
+                                    "color": "#888", "fontSize": "0.7rem",
+                                }) if sym_short else None,
+                            ],
+                        ),
+                        html.Span(
+                            f"qty: {qty_val}" if qty_val else "",
+                            style={"color": "#666", "fontSize": "0.68rem"},
+                        ) if qty_val else None,
+                    ]),
+                    # P&L column
+                    html.Div(children=pl_children,
+                             style={"textAlign": "right", "minWidth": "50px"}),
                 ],
-            ))
+            )
+            log_entries.append(row)
 
     if not log_entries:
-        log_entries = [html.Div("No strategy events yet", style={"color": "#666", "textAlign": "center"})]
+        log_entries = [html.Div("No strategy events yet",
+                                style={"color": "#666", "textAlign": "center",
+                                       "padding": "20px"})]
+
+    # ── daily trading stats (from position tracker) ───────────────────────
+    daily_closes = 0
+    daily_booked = 0.0
+    daily_martingales = 0
+    if isinstance(tracker_data, dict):
+        for _k, _v in tracker_data.items():
+            if _k.startswith("_") or not isinstance(_v, dict):
+                continue
+            daily_closes += _v.get("close_count", 0)
+            daily_booked += _v.get("total_profit_closed", 0.0)
+            daily_martingales += _v.get("martingale_count", 0)
+    daily_avg = daily_booked / max(daily_closes, 1)
+    booked_color = ACCENT if daily_booked >= 0 else RED
+
+    daily_stats_cards = [
+        _kpi_card("Today's Booked Profit", f"₹{daily_booked:,.2f}", booked_color),
+        _kpi_card("Avg Profit / Close", f"₹{daily_avg:,.2f}",
+                  ACCENT if daily_avg > 0 else RED),
+        _kpi_card("Closes Today", str(daily_closes)),
+        _kpi_card("Martingale Adds", str(daily_martingales),
+                  "#9b59b6" if daily_martingales > 0 else "#666"),
+    ]
+
+    # ── profit history line chart ─────────────────────────────────────────
+    profit_fig = _build_profit_chart(history_data)
 
     return (
         status_text,
@@ -487,6 +767,8 @@ def refresh_dashboard(_n, selected_mode):
         pos_table,
         signal_cards,
         log_entries,
+        daily_stats_cards,
+        profit_fig,
     )
 
 

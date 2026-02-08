@@ -28,6 +28,7 @@ from constants import (
     FIBO_SEQUENCE_LENGTH,
 )
 from state_writer import log_strategy_event
+from position_tracker import PositionTracker
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -42,6 +43,8 @@ class OrderAction:
     qty: int                # base lot qty (for new entries) or current qty (for exits)
     pl: float               # unrealised P&L (0 if no position)
     martingale_qty: int     # fibonacci-calculated qty (only for BUY_WITH_SPECIFIC_VOLUME)
+    api_total_pl: float = 0.0   # raw `pl` from Fyers API (realized + unrealized)
+    position_qty: int = 0       # actual current position qty from API
 
     @property
     def is_actionable(self) -> bool:
@@ -67,10 +70,11 @@ class HeikenAshiMartingale:
     TIMES           = STRATEGY_TIMES
     PRODUCT_TYPE    = STRATEGY_PRODUCT_TYPE
 
-    def __init__(self, mode: str = "demo", brake: bool = False, max_balance_usage: float = 0) -> None:
+    def __init__(self, mode: str = "demo", brake: bool = False, max_balance_usage: float = 0, tracker: PositionTracker | None = None) -> None:
         self.mode = mode
         self.brake = brake
         self.max_balance_usage = max_balance_usage
+        self.tracker = tracker
 
     # ── fibonacci helpers ──────────────────────────────────────────────────────
 
@@ -111,17 +115,23 @@ class HeikenAshiMartingale:
     @staticmethod
     def _read_position(position_df, symbol: str, product_type: str = "MARGIN"):
         """
-        Return (qty, unrealised_pl) for *symbol* from position DataFrame.
+        Return (qty, unrealized_pl, realized_pl, total_pl) for *symbol*.
+        total_pl = realized_profit + unrealized_profit from Fyers API.
         """
         if position_df is None or position_df.empty:
-            return 0, 0.0
+            return 0, 0.0, 0.0, 0.0
         row = position_df[
             (position_df["symbol"] == symbol)
             & (position_df["productType"] == product_type)
         ]
         if row.empty:
-            return 0, 0.0
-        return int(row["netQty"].iloc[0]), float(row["unrealized_profit"].iloc[0])
+            return 0, 0.0, 0.0, 0.0
+        return (
+            int(row["netQty"].iloc[0]),
+            float(row["unrealized_profit"].iloc[0]),
+            float(row["realized_profit"].iloc[0]),
+            float(row["pl"].iloc[0]),
+        )
 
     # ══════════════════════════════════════════════════════════════════════════
     #  EVALUATE — pure signal logic, no side effects
@@ -156,8 +166,18 @@ class HeikenAshiMartingale:
         pe_power, pe_list, pe_cross = power_list[1]
         idx_power, idx_list, idx_cross = power_list[2]
 
-        ce_qty, ce_pl = self._read_position(position_df, ce_symbol, self.PRODUCT_TYPE)
-        pe_qty, pe_pl = self._read_position(position_df, pe_symbol, self.PRODUCT_TYPE)
+        ce_qty, ce_unrealized, ce_realized, ce_total_pl = self._read_position(
+            position_df, ce_symbol, self.PRODUCT_TYPE)
+        pe_qty, pe_unrealized, pe_realized, pe_total_pl = self._read_position(
+            position_df, pe_symbol, self.PRODUCT_TYPE)
+
+        # Effective P&L: adjusted for previously booked profit (HEDGE cycles)
+        if self.tracker:
+            ce_pl = self.tracker.get_effective_pl(ce_symbol, ce_total_pl)
+            pe_pl = self.tracker.get_effective_pl(pe_symbol, pe_total_pl)
+        else:
+            ce_pl = ce_unrealized
+            pe_pl = pe_unrealized
 
         ce_count = 1 if abs(ce_qty) > 0 else 0
         pe_count = 1 if abs(pe_qty) > 0 else 0
@@ -166,10 +186,12 @@ class HeikenAshiMartingale:
         ce_action = OrderAction(
             symbol=ce_symbol, status=Transaction.DO_NOTHING,
             qty=base_qty, pl=ce_pl, martingale_qty=0,
+            api_total_pl=ce_total_pl, position_qty=ce_qty,
         )
         pe_action = OrderAction(
             symbol=pe_symbol, status=Transaction.DO_NOTHING,
             qty=base_qty, pl=pe_pl, martingale_qty=0,
+            api_total_pl=pe_total_pl, position_qty=pe_qty,
         )
 
         idx_trend = "BULLISH" if idx_list[0] == 1 else "BEARISH"
@@ -424,24 +446,34 @@ class HeikenAshiMartingale:
         # ── BUY ────────────────────────────────────────────────────────────
         if s == Transaction.BUY:
             resp = fyers.buy(sym, action.qty)
+            if self.tracker:
+                self.tracker.record_entry(sym, action.qty, 1)
             log_strategy_event(sym, label, "BUY_EXECUTED",
                                qty=action.qty, details=str(resp))
 
         # ── SELL (short entry) ─────────────────────────────────────────────
         elif s == Transaction.SELL:
             resp = fyers.sell(sym, action.qty)
+            if self.tracker:
+                self.tracker.record_entry(sym, action.qty, -1)
             log_strategy_event(sym, label, "SELL_EXECUTED",
                                qty=action.qty, details=str(resp))
 
         # ── CLOSE_BUY (exit long → sell existing qty) ─────────────────────
         elif s == Transaction.CLOSE_BUY:
             resp = fyers.sell(sym, action.qty)
+            if self.tracker:
+                self.tracker.record_close(
+                    sym, action.api_total_pl, action.qty, action.pl)
             log_strategy_event(sym, label, "CLOSE_BUY_EXECUTED",
                                qty=action.qty, pl=action.pl, details=str(resp))
 
         # ── CLOSE_SELL (exit short → buy back existing qty) ────────────────
         elif s == Transaction.CLOSE_SELL:
             resp = fyers.buy(sym, action.qty)
+            if self.tracker:
+                self.tracker.record_close(
+                    sym, action.api_total_pl, action.qty, action.pl)
             log_strategy_event(sym, label, "CLOSE_SELL_EXECUTED",
                                qty=action.qty, pl=action.pl, details=str(resp))
 
@@ -450,6 +482,10 @@ class HeikenAshiMartingale:
         elif s == Transaction.BUY_WITH_SPECIFIC_VOLUME:
             fibo_qty = action.martingale_qty
             resp = fyers.buy(sym, fibo_qty)
+            if self.tracker:
+                self.tracker.record_martingale(
+                    sym, fibo_qty, abs(action.position_qty),
+                    1, action.pl, action.api_total_pl)
             log_strategy_event(sym, label, "MARTINGALE_BUY_EXECUTED",
                                qty=fibo_qty,
                                details=f"fibo_qty={fibo_qty} | {str(resp)}")
@@ -459,6 +495,10 @@ class HeikenAshiMartingale:
         elif s == Transaction.SELL_WITH_SPECIFIC_VOLUME:
             fibo_qty = action.martingale_qty
             resp = fyers.sell(sym, fibo_qty)
+            if self.tracker:
+                self.tracker.record_martingale(
+                    sym, fibo_qty, abs(action.position_qty),
+                    -1, action.pl, action.api_total_pl)
             log_strategy_event(sym, label, "MARTINGALE_SELL_EXECUTED",
                                qty=fibo_qty,
                                details=f"fibo_qty={fibo_qty} | {str(resp)}")

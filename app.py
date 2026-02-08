@@ -36,6 +36,7 @@ from fyers import Fyers
 from demo_fyers import DemoFyers
 from indicator import SmoothedHeikenAshi
 from strategy import HeikenAshiMartingale
+from position_tracker import PositionTracker
 from constants import (
     Transaction,
     SYMBOLS_JSON,
@@ -348,6 +349,7 @@ def inner_loop(
     mode: str = "demo",
     timeframe: str = DEFAULT_TIMEFRAME,
     candles: int = DEFAULT_CANDLES,
+    tracker: PositionTracker | None = None,
 ) -> date:
     """
     Blocking inner loop: for every symbol in *pairs_json* —
@@ -384,6 +386,8 @@ def inner_loop(
         write_app_status(mode, str(current_day), status="trading",
                          message=f"Trading {symbol_key} | CE={ce_symbol} PE={pe_symbol}")
 
+        snapshot_counter = 0
+
         # ── trading loop for this symbol pair ──────────────────────────────
         while True:
             # ── Step F: Day-change re-authorization ────────────────────────
@@ -394,7 +398,7 @@ def inner_loop(
                 holidays = holidays_new
                 special_sessions = ss_new
                 current_day = today
-                write_app_status(mode, str(current_day), status="re-auth",
+                write_app_status(mode,           str(current_day), status="re-auth",
                                  message=f"Day changed → re-auth for {current_day}")
 
             # ── Check trading window ──────────────────────────────────────
@@ -472,6 +476,15 @@ def inner_loop(
                 # ── Dump positions + account after execution ──────────────
                 _dump_positions_and_account(fyers)
 
+                # ── Snapshot profit history for dashboard (~15s) ────────
+                snapshot_counter += 1
+                if snapshot_counter % 15 == 0 and tracker:
+                    for _act in (ce_action, pe_action):
+                        if _act.position_qty != 0:
+                            tracker.log_snapshot(
+                                _act.symbol, _act.pl,
+                                _act.api_total_pl, abs(_act.position_qty))
+
                 # ── Step E: Check if all positions are closed ─────────────
                 if ce_action.is_actionable or pe_action.is_actionable:
                     sleep(2)
@@ -507,10 +520,12 @@ def main():
     brake = config.get("brake", 0)
 
     fyers = DemoFyers() if mode == "demo" else Fyers()
+    tracker = PositionTracker(mode=mode)
     strategy = HeikenAshiMartingale(
         mode=mode,
         brake=bool(brake),
         max_balance_usage=config.get("max_balance_usage", 0),
+        tracker=tracker,
     )
 
     indices     = config.get("indices", [])
@@ -539,6 +554,7 @@ def main():
         # ── Step 1: Day-change → re-auth, re-download, reset flags ─────────
         if today != current_day:
             current_day = today
+            tracker.reset_for_new_day()
             option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=True)
             indices_scanned_today     = False
             commodities_scanned_today = False
@@ -591,6 +607,7 @@ def main():
                     special_sessions=special_sessions,
                     inner_day_ref=current_day,
                     mode=mode,
+                    tracker=tracker,
                 )
 
         # ── Step 3b: COMMODITY window (only outside indices hours) ─────────
@@ -613,6 +630,7 @@ def main():
                     special_sessions=special_sessions,
                     inner_day_ref=current_day,
                     mode=mode,
+                    tracker=tracker,
                 )
 
         sleep(1)
