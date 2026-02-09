@@ -61,12 +61,14 @@ class SmoothedHeikenAshi:
             # SMA seed
             out[seed_idx] = np.mean(values[seed_idx - length + 1 : seed_idx + 1])
 
-            # Recursive from seed_idx + 1
+            # Recursive: alpha * src + (1 - alpha) * nz(prev)
+            # Pine's nz() replaces NaN with 0
             for i in range(seed_idx + 1, n):
                 if np.isnan(values[i]):
                     out[i] = np.nan
                 else:
-                    out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
+                    prev = 0.0 if np.isnan(out[i - 1]) else out[i - 1]
+                    out[i] = alpha * values[i] + (1 - alpha) * prev
 
             return pd.Series(out, index=series.index)
         elif ma_type == 'VWMA':
@@ -97,9 +99,24 @@ class SmoothedHeikenAshi:
             weights = [np.exp(-((i - m) ** 2) / (2 * s ** 2)) for i in range(length)]
             weights = np.array(weights) / np.sum(weights)
             return series.rolling(length).apply(lambda x: np.dot(x, weights), raw=True)
-        elif ma_type in ('SMMA', 'SWMA'):
-            # SMMA is equivalent to RMA — delegate
-            return SmoothedHeikenAshi.ma(series, length, 'RMA', volume)
+        elif ma_type == 'SMMA':
+            # Pine: smma := na(smma[1]) ? src : (smma[1] * (length - 1) + src) / length
+            # Key difference from RMA: seed = first non-NaN src value, NOT SMA(length)
+            values = series.values.astype(float)
+            n = len(values)
+            out = np.full(n, np.nan)
+            for i in range(n):
+                if np.isnan(values[i]):
+                    continue
+                if i == 0 or np.isnan(out[i - 1]):
+                    out[i] = values[i]                    # na(smma[1]) ? src
+                else:
+                    out[i] = (out[i - 1] * (length - 1) + values[i]) / length
+            return pd.Series(out, index=series.index)
+        elif ma_type == 'SWMA':
+            # Pine: ta.swma(src) — fixed length 4, symmetric weights [1/6, 2/6, 2/6, 1/6]
+            w = np.array([1.0, 2.0, 2.0, 1.0]) / 6.0
+            return series.rolling(4).apply(lambda x: np.dot(x, w), raw=True)
         elif ma_type == 'LSMA':
             return series.rolling(length).apply(
                 lambda x: np.polyfit(range(length), x, 1)[0] * (length - 1) + np.polyfit(range(length), x, 1)[1],
@@ -139,33 +156,36 @@ class SmoothedHeikenAshi:
         l = SmoothedHeikenAshi.ma(df['Low'], smooth_length, smooth_ma_type, df['Volume'])
         c = SmoothedHeikenAshi.ma(df['Close'], smooth_length, smooth_ma_type, df['Volume'])
 
-        # Step 2: Heiken Ashi Calculation (recursive)
-        # ha_close is NaN wherever any of o/h/l/c is NaN
-        ha_close = (o + h + l + c) / 4
-        ha_open = pd.Series(np.nan, index=df.index)
+        # Step 2: Heiken Ashi — line-for-line match with Pine Script:
+        #   haclose = (o + h + l + c) / 4.0
+        #   haopen  := na(haopen[1]) ? (o + c) / 2 : (haopen[1] + haclose[1]) / 2
+        #   hahigh  = math.max(h, math.max(haopen, haclose))
+        #   halow   = math.min(l, math.min(haopen, haclose))
+        ha_close = (o + h + l + c) / 4.0
 
-        # TradingView: `var float haopen = na`
-        # haopen := na(haopen[1]) ? (o + c) / 2 : (haopen[1] + haclose[1]) / 2
-        # → ha_open is NaN until the first bar where ha_close is valid,
-        #   then seeded with (o + c) / 2 and recursive from there.
-        ha_close_vals = ha_close.values
-        first_valid_pos = -1
-        for i in range(len(ha_close_vals)):
-            if not np.isnan(ha_close_vals[i]):
-                first_valid_pos = i
-                break
+        o_vals  = o.values.astype(float)
+        c_vals  = c.values.astype(float)
+        hc_vals = ha_close.values.astype(float)
+        n = len(df)
+        ho_vals = np.full(n, np.nan)
 
-        if first_valid_pos >= 0:
-            ha_open.iloc[first_valid_pos] = (
-                o.iloc[first_valid_pos] + c.iloc[first_valid_pos]
-            ) / 2
-            for i in range(first_valid_pos + 1, len(df)):
-                ha_open.iloc[i] = (
-                    ha_open.iloc[i - 1] + ha_close.iloc[i - 1]
-                ) / 2
+        for i in range(n):
+            if i == 0 or np.isnan(ho_vals[i - 1]):
+                # Pine: na(haopen[1]) → seed with (o + c) / 2
+                ov, cv = o_vals[i], c_vals[i]
+                if np.isnan(ov) or np.isnan(cv):
+                    ho_vals[i] = np.nan
+                else:
+                    ho_vals[i] = (ov + cv) / 2.0
+            else:
+                # Pine: (haopen[1] + haclose[1]) / 2
+                ho_vals[i] = (ho_vals[i - 1] + hc_vals[i - 1]) / 2.0
 
-        ha_high = pd.concat([h, ha_open, ha_close], axis=1).max(axis=1)
-        ha_low = pd.concat([l, ha_open, ha_close], axis=1).min(axis=1)
+        ha_open = pd.Series(ho_vals, index=df.index)
+
+        # Pine: math.max(na, x) = na  →  skipna=False
+        ha_high = pd.concat([h, ha_open, ha_close], axis=1).max(axis=1, skipna=False)
+        ha_low  = pd.concat([l, ha_open, ha_close], axis=1).min(axis=1, skipna=False)
 
         # Step 3: Smooth again after HA
         sha_open = SmoothedHeikenAshi.ma(ha_open, after_smooth_length, after_smooth_ma_type, df['Volume'])
