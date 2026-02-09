@@ -442,17 +442,13 @@ def _action_badge(action: str) -> html.Span:
 
 
 def _build_profit_chart(history_data: list) -> go.Figure:
-    """Build a premium interactive Plotly chart of effective P&L over time.
-
-    Features: rich hover tooltips, rangeslider for time navigation,
-    scroll zoom, touch-friendly markers, detailed event annotations.
-    """
+    """Build a premium Plotly line chart of effective P&L over time."""
     empty_layout = dict(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
         plot_bgcolor="rgba(0,0,0,0)",
-        height=420,
-        margin=dict(l=65, r=30, t=20, b=50),
+        height=320,
+        margin=dict(l=50, r=20, t=10, b=40),
         font=dict(
             color=COLORS["text_secondary"],
             size=11,
@@ -462,7 +458,7 @@ def _build_profit_chart(history_data: list) -> go.Figure:
 
     if not history_data:
         fig = go.Figure()
-        fig.update_layout(**empty_layout, height=320)
+        fig.update_layout(**empty_layout)
         fig.add_annotation(text="No profit data yet", showarrow=False,
                            font=dict(size=14, color=COLORS["text_dim"]),
                            xref="paper", yref="paper", x=0.5, y=0.5)
@@ -477,217 +473,123 @@ def _build_profit_chart(history_data: list) -> go.Figure:
 
     if not today_data:
         fig = go.Figure()
-        fig.update_layout(**empty_layout, height=320)
+        fig.update_layout(**empty_layout)
         fig.add_annotation(text="No data for today yet", showarrow=False,
                            font=dict(size=14, color=COLORS["text_dim"]),
                            xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
 
-    # Organise data by symbol
     symbols: dict = {}
     for entry in today_data:
         sym = entry.get("symbol", "")
         if sym not in symbols:
-            symbols[sym] = []
-        symbols[sym].append(entry)
+            symbols[sym] = {
+                "x": [], "y": [],
+                "close_x": [], "close_y": [],
+                "mg_x": [], "mg_y": [],
+            }
+        symbols[sym]["x"].append(entry["timestamp"])
+        symbols[sym]["y"].append(entry.get("effective_pl", 0))
+        if entry["action"] == "CLOSE":
+            symbols[sym]["close_x"].append(entry["timestamp"])
+            symbols[sym]["close_y"].append(entry.get("effective_pl", 0))
+        elif entry["action"] == "MARTINGALE":
+            symbols[sym]["mg_x"].append(entry["timestamp"])
+            symbols[sym]["mg_y"].append(entry.get("effective_pl", 0))
 
     fig = go.Figure()
     chart_colors = ["#00d2a0", "#ff6b6b", "#ffd93d", "#7c6cf0", "#5dade2", "#e74c3c"]
 
-    # Track global min/max for zone shading
-    all_y: list[float] = []
-
-    for i, (sym, entries) in enumerate(symbols.items()):
+    for i, (sym, data) in enumerate(symbols.items()):
         color = chart_colors[i % len(chart_colors)]
         short_name = sym.split(":")[-1] if ":" in sym else sym
         r, g, b = int(color[1:3], 16), int(color[3:5], 16), int(color[5:7], 16)
-        fill_color = f"rgba({r},{g},{b},0.08)"
+        fill_color = f"rgba({r},{g},{b},0.06)"
 
-        x_vals = [e["timestamp"] for e in entries]
-        y_vals = [e.get("effective_pl", 0) for e in entries]
-        actions = [e.get("action", "") for e in entries]
-        quantities = [str(e.get("qty", "\u2014")) for e in entries]
-        details_list = [e.get("details", "\u2014") or "\u2014" for e in entries]
-        names = [short_name] * len(entries)
-        all_y.extend(y_vals)
+        # Build custom data for rich hover
+        actions = []
+        for ts in data["x"]:
+            for e in today_data:
+                if e["timestamp"] == ts and e.get("symbol") == sym:
+                    actions.append(e.get("action", "—"))
+                    break
+            else:
+                actions.append("—")
 
-        customdata = list(zip(actions, quantities, details_list, names))
-
-        # Main line trace with rich hover
         fig.add_trace(go.Scatter(
-            x=x_vals, y=y_vals,
-            mode="lines+markers",
-            name=short_name,
+            x=data["x"], y=data["y"],
+            mode="lines+markers", name=short_name,
             line=dict(color=color, width=2.5, shape="spline"),
-            marker=dict(size=5, color=color, opacity=0.7,
-                        line=dict(width=1, color="rgba(255,255,255,0.2)")),
+            marker=dict(size=4, color=color, opacity=0.6),
             fill="tozeroy", fillcolor=fill_color,
-            customdata=customdata,
+            customdata=actions,
             hovertemplate=(
-                "<b style='font-size:13px'>%{customdata[3]}</b><br>"
-                "<span style='color:#5a6580'>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</span><br>"
-                "\u23f0 <b>Time:</b> %{x}<br>"
-                "\U0001f4b0 <b>P&L:</b> \u20b9%{y:,.2f}<br>"
-                "\U0001f4cb <b>Action:</b> %{customdata[0]}<br>"
-                "\U0001f4e6 <b>Qty:</b> %{customdata[1]}<br>"
-                "\U0001f4dd <b>Note:</b> %{customdata[2]}"
+                "<b>%{fullData.name}</b><br>"
+                "Time: %{x}<br>"
+                "P&L: ₹%{y:,.2f}<br>"
+                "Action: %{customdata}"
                 "<extra></extra>"
             ),
         ))
-
-        # CLOSE event markers \u2014 prominent stars
-        close_entries = [e for e in entries if e.get("action") == "CLOSE"]
-        if close_entries:
-            cx = [e["timestamp"] for e in close_entries]
-            cy = [e.get("effective_pl", 0) for e in close_entries]
-            c_custom = [
-                [e.get("action", ""), str(e.get("qty", "\u2014")),
-                 e.get("details", "\u2014") or "\u2014", short_name]
-                for e in close_entries
-            ]
+        if data["close_x"]:
             fig.add_trace(go.Scatter(
-                x=cx, y=cy,
-                mode="markers+text",
-                name=f"\u2b50 {short_name} Close",
-                marker=dict(
-                    color=color, size=14, symbol="star",
-                    line=dict(width=2, color="#ffffff"),
-                ),
-                text=[f"\u20b9{v:,.0f}" for v in cy],
-                textposition="top center",
-                textfont=dict(size=9, color=color,
-                              family="'JetBrains Mono', monospace"),
-                customdata=c_custom,
+                x=data["close_x"], y=data["close_y"],
+                mode="markers", name=f"{short_name} close",
+                marker=dict(color=color, size=10, symbol="star",
+                            line=dict(width=2, color=COLORS["bg"])),
                 hovertemplate=(
-                    "<b style='font-size:13px'>\u2b50 CLOSE \u2014 %{customdata[3]}</b><br>"
-                    "<span style='color:#5a6580'>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</span><br>"
-                    "\u23f0 <b>Time:</b> %{x}<br>"
-                    "\U0001f4b0 <b>Booked P&L:</b> \u20b9%{y:,.2f}<br>"
-                    "\U0001f4e6 <b>Qty:</b> %{customdata[1]}<br>"
-                    "\U0001f4dd <b>Note:</b> %{customdata[2]}"
+                    "<b>⭐ CLOSE — %{fullData.name}</b><br>"
+                    "Time: %{x}<br>"
+                    "Booked P&L: ₹%{y:,.2f}"
                     "<extra></extra>"
                 ),
-                showlegend=True,
+                showlegend=False,
             ))
-
-        # MARTINGALE event markers \u2014 diamonds
-        mg_entries = [e for e in entries if e.get("action") == "MARTINGALE"]
-        if mg_entries:
-            mx = [e["timestamp"] for e in mg_entries]
-            my = [e.get("effective_pl", 0) for e in mg_entries]
-            m_custom = [
-                [e.get("action", ""), str(e.get("qty", "\u2014")),
-                 e.get("details", "\u2014") or "\u2014", short_name]
-                for e in mg_entries
-            ]
+        if data["mg_x"]:
             fig.add_trace(go.Scatter(
-                x=mx, y=my,
-                mode="markers+text",
-                name=f"\u26a1 {short_name} Martingale",
-                marker=dict(
-                    color="#9b59b6", size=12, symbol="diamond",
-                    line=dict(width=2, color="#ffffff"),
-                ),
-                text=[f"\u20b9{v:,.0f}" for v in my],
-                textposition="bottom center",
-                textfont=dict(size=9, color="#9b59b6",
-                              family="'JetBrains Mono', monospace"),
-                customdata=m_custom,
+                x=data["mg_x"], y=data["mg_y"],
+                mode="markers", name=f"{short_name} martingale",
+                marker=dict(color="#9b59b6", size=9, symbol="diamond",
+                            line=dict(width=2, color=COLORS["bg"])),
                 hovertemplate=(
-                    "<b style='font-size:13px'>\u26a1 MARTINGALE \u2014 %{customdata[3]}</b><br>"
-                    "<span style='color:#5a6580'>\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500</span><br>"
-                    "\u23f0 <b>Time:</b> %{x}<br>"
-                    "\U0001f4b0 <b>P&L at entry:</b> \u20b9%{y:,.2f}<br>"
-                    "\U0001f4e6 <b>Qty added:</b> %{customdata[1]}<br>"
-                    "\U0001f4dd <b>Note:</b> %{customdata[2]}"
+                    "<b>⚡ MARTINGALE — %{fullData.name}</b><br>"
+                    "Time: %{x}<br>"
+                    "P&L at entry: ₹%{y:,.2f}"
                     "<extra></extra>"
                 ),
-                showlegend=True,
+                showlegend=False,
             ))
 
-    # Zero profit line
-    fig.add_hline(y=0, line_dash="dot", line_color=COLORS["text_muted"],
-                  opacity=0.5, annotation_text="Break Even",
-                  annotation_position="bottom right",
-                  annotation_font=dict(size=9, color=COLORS["text_muted"]))
-
-    # Profit / Loss zone shading
-    if all_y:
-        y_max = max(all_y)
-        y_min = min(all_y)
-        if y_max > 0:
-            fig.add_hrect(y0=0, y1=y_max * 1.1,
-                          fillcolor="rgba(0, 210, 160, 0.03)",
-                          line_width=0, layer="below")
-        if y_min < 0:
-            fig.add_hrect(y0=y_min * 1.1, y1=0,
-                          fillcolor="rgba(255, 107, 107, 0.03)",
-                          line_width=0, layer="below")
-
+    fig.add_hline(y=0, line_dash="dot", line_color=COLORS["text_muted"], opacity=0.5)
     fig.update_layout(
         **empty_layout,
         hovermode="closest",
         hoverlabel=dict(
-            bgcolor="rgba(20, 25, 41, 0.95)",
+            bgcolor="rgba(17, 22, 40, 0.95)",
             bordercolor=COLORS["accent"],
             font=dict(family="'Inter', sans-serif", size=12,
                       color=COLORS["text"]),
-            namelength=-1,
-            align="left",
         ),
         xaxis=dict(
-            title=dict(text="Time",
-                       font=dict(size=11, color=COLORS["text_dim"])),
-            showgrid=True,
-            gridcolor=COLORS["chart_grid"],
-            gridwidth=0.5,
-            tickfont=dict(size=10, color=COLORS["text_dim"],
-                         family="'JetBrains Mono', monospace"),
-            rangeslider=dict(
-                visible=True,
-                bgcolor="rgba(15, 20, 35, 0.8)",
-                bordercolor=COLORS["card_border"],
-                thickness=0.06,
-            ),
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor",
-            spikecolor=COLORS["accent"],
-            spikethickness=1,
-            spikedash="dot",
+            title="Time", showgrid=False,
+            tickfont=dict(size=10, color=COLORS["text_dim"]),
+            rangeslider=dict(visible=True, bgcolor=COLORS["bg_secondary"],
+                             bordercolor=COLORS["card_border"], thickness=0.06),
+            showspikes=True, spikemode="across", spikesnap="cursor",
+            spikecolor=COLORS["accent"], spikethickness=1, spikedash="dot",
         ),
         yaxis=dict(
-            title=dict(text="P&L (\u20b9)",
-                       font=dict(size=11, color=COLORS["text_dim"])),
-            showgrid=True,
-            gridcolor=COLORS["chart_grid"],
-            gridwidth=0.5,
-            zeroline=True,
-            zerolinecolor=COLORS["text_muted"],
-            zerolinewidth=1,
-            tickfont=dict(size=10, color=COLORS["text_dim"],
-                         family="'JetBrains Mono', monospace"),
-            tickprefix="\u20b9",
+            title="P&L (₹)", showgrid=True,
+            gridcolor=COLORS["chart_grid"], gridwidth=0.5,
+            zeroline=True, zerolinecolor=COLORS["text_muted"],
+            zerolinewidth=0.5, tickprefix="₹",
+            tickfont=dict(size=10, color=COLORS["text_dim"]),
             fixedrange=False,
-            showspikes=True,
-            spikemode="across",
-            spikesnap="cursor",
-            spikecolor=COLORS["accent"],
-            spikethickness=1,
-            spikedash="dot",
+            showspikes=True, spikemode="across", spikesnap="cursor",
+            spikecolor=COLORS["accent"], spikethickness=1, spikedash="dot",
         ),
-        legend=dict(
-            orientation="h",
-            y=-0.22,
-            x=0.5,
-            xanchor="center",
-            bgcolor="rgba(0,0,0,0)",
-            font=dict(size=10, color=COLORS["text_secondary"],
-                      family="'Inter', sans-serif"),
-            itemsizing="constant",
-            itemclick="toggle",
-            itemdoubleclick="toggleothers",
-        ),
+        legend=dict(orientation="h", y=-0.25,
+                    font=dict(size=10, color=COLORS["text_dim"])),
         dragmode="zoom",
     )
     return fig
@@ -751,11 +653,6 @@ app.index_string = """<!DOCTYPE html>
     }
     ::selection { background: rgba(124, 108, 240, 0.3); color: #e8ecf4; }
     .plotly .hoverlayer .hovertext { font-family: 'Inter', sans-serif !important; }
-    .modebar { background: transparent !important; }
-    .modebar-btn { color: #5a6580 !important; transition: color 0.2s ease; }
-    .modebar-btn:hover { color: #7c6cf0 !important; }
-    .modebar-btn.active { color: #00d2a0 !important; }
-    .js-plotly-plot .plotly .rangeslider-container { background: rgba(15,20,35,0.6) !important; }
 
     .dash-spreadsheet-container .dash-spreadsheet-inner th {
         font-family: 'Inter', sans-serif !important; letter-spacing: 0.5px !important;
@@ -959,21 +856,12 @@ app.layout = html.Div(
                             "fontSize": "15px", "fontWeight": "600",
                             "color": COLORS["text"], "letterSpacing": "0.3px"}),
                     ]),
-                    dcc.Graph(
-                        id="profit-chart",
-                        config={
-                            "displayModeBar": True,
-                            "displaylogo": False,
-                            "scrollZoom": True,
-                            "modeBarButtonsToRemove": ["lasso2d", "select2d"],
-                            "toImageButtonOptions": {
-                                "format": "png",
-                                "filename": "ballom_profit_history",
-                                "height": 600, "width": 1200, "scale": 2,
-                            },
-                        },
-                        style={"width": "100%"},
-                    ),
+                    dcc.Graph(id="profit-chart", config={
+                        "displayModeBar": True,
+                        "displaylogo": False,
+                        "scrollZoom": True,
+                        "modeBarButtonsToRemove": ["lasso2d", "select2d"],
+                    }),
                 ]),
 
                 # Two-column layout
@@ -1250,20 +1138,20 @@ def refresh_dashboard(_n, selected_mode):
                             "display": "flex", "flexWrap": "wrap",
                             "gap": "12px", "alignItems": "center",
                         }, children=[
-                            html.Div(style={"display": "inline-flex", "gap": "6px", "alignItems": "center"}, children=[
-                                html.Span("Candles:", style={"fontSize": "0.58rem", "fontWeight": "600",
+                            html.Div(style={"display": "inline-flex", "gap": "5px", "alignItems": "center"}, children=[
+                                html.Span("Candles:", style={"fontSize": "0.6rem", "fontWeight": "600",
                                                               "color": COLORS["text_dim"]}),
                                 html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
                                                  "borderRadius": "50%", "background": "#00d2a0", "marginRight": "2px"}),
-                                html.Span("Bull", style={"fontSize": "0.58rem", "color": COLORS["text_secondary"],
+                                html.Span("Bull", style={"fontSize": "0.6rem", "color": COLORS["text_secondary"],
                                                           "marginRight": "4px"}),
                                 html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
                                                  "borderRadius": "50%", "background": "#e74c3c", "marginRight": "2px"}),
-                                html.Span("Bear", style={"fontSize": "0.58rem", "color": COLORS["text_secondary"]}),
+                                html.Span("Bear", style={"fontSize": "0.6rem", "color": COLORS["text_secondary"]}),
                             ]),
                             html.Span("\u2502", style={"color": COLORS["text_muted"], "fontSize": "0.7rem"}),
-                            html.Div(style={"display": "inline-flex", "gap": "6px", "alignItems": "center"}, children=[
-                                html.Span("Power:", style={"fontSize": "0.58rem", "fontWeight": "600",
+                            html.Div(style={"display": "inline-flex", "gap": "5px", "alignItems": "center"}, children=[
+                                html.Span("Power:", style={"fontSize": "0.6rem", "fontWeight": "600",
                                                             "color": COLORS["text_dim"]}),
                                 html.Span(style={"display": "inline-block", "width": "6px", "height": "12px",
                                                  "borderRadius": "2px", "background": "#e74c3c", "marginRight": "1px"}),
@@ -1284,7 +1172,7 @@ def refresh_dashboard(_n, selected_mode):
                             "gap": "12px", "alignItems": "center",
                         }, children=[
                             html.Div(style={"display": "inline-flex", "gap": "5px", "alignItems": "center"}, children=[
-                                html.Span("Crossover Bull:", style={"fontSize": "0.58rem", "fontWeight": "600",
+                                html.Span("Crossover Bull:", style={"fontSize": "0.6rem", "fontWeight": "600",
                                                                      "color": COLORS["text_dim"]}),
                                 html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
                                                  "borderRadius": "50%", "background": "#4de8c8", "marginRight": "1px"}),
@@ -1300,7 +1188,7 @@ def refresh_dashboard(_n, selected_mode):
                             ]),
                             html.Span("\u2502", style={"color": COLORS["text_muted"], "fontSize": "0.7rem"}),
                             html.Div(style={"display": "inline-flex", "gap": "5px", "alignItems": "center"}, children=[
-                                html.Span("Crossover Bear:", style={"fontSize": "0.58rem", "fontWeight": "600",
+                                html.Span("Crossover Bear:", style={"fontSize": "0.6rem", "fontWeight": "600",
                                                                      "color": COLORS["text_dim"]}),
                                 html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
                                                  "borderRadius": "50%", "background": "#ee7b6e", "marginRight": "1px"}),
