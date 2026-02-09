@@ -48,9 +48,9 @@ COMMODITY_END   = dt_time(23, 55)
 #  SHA INDICATOR PARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-SHA_LENGTH          = 9
+SHA_LENGTH          = 5
 SHA_MA_TYPE         = "RMA"
-DEFAULT_TIMEFRAME   = "15"
+DEFAULT_TIMEFRAME   = "5"
 DEFAULT_CANDLES     = 100
 
 
