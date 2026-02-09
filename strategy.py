@@ -171,10 +171,11 @@ class HeikenAshiMartingale:
         pe_qty, pe_unrealized, pe_realized, pe_total_pl = self._read_position(
             position_df, pe_symbol, self.PRODUCT_TYPE)
 
-        # Effective P&L: adjusted for previously booked profit (HEDGE cycles)
+        # Effective P&L for hedge exit: use UNREALIZED profit only
+        # (realized is already booked from previous trades on same symbol)
         if self.tracker:
-            ce_pl = self.tracker.get_effective_pl(ce_symbol, ce_total_pl)
-            pe_pl = self.tracker.get_effective_pl(pe_symbol, pe_total_pl)
+            ce_pl = self.tracker.get_effective_pl(ce_symbol, ce_unrealized)
+            pe_pl = self.tracker.get_effective_pl(pe_symbol, pe_unrealized)
         else:
             ce_pl = ce_unrealized
             pe_pl = pe_unrealized
