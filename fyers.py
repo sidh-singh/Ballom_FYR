@@ -364,16 +364,22 @@ class Fyers:
             return 0.4
 
         # ── retry loop ─────────────────────────────────────────────────────────
+        _log = []  # collect debug breadcrumbs
+
         for attempt in range(1, max_retries + 1):
             try:
+                # ─── 1. Get underlying price ──────────────────────────────
                 quote = self.api.quotes(data={"symbols": symbol})
                 current_price = quote["d"][0]["v"].get("lp")
                 if not current_price:
                     raise ValueError("Underlying price unavailable")
+                _log.append(f"price={current_price}")
 
+                # ─── 2. Base option chain (expiry list + VIX) ─────────────
                 base_chain = self.api.optionchain(data={"symbol": symbol, "strikecount": 20})
                 data = base_chain.get("data", {})
                 vix = data.get("indiavixData", {}).get("ltp", 20)
+                _log.append(f"VIX={vix}")
 
                 expiry_map = {e["date"]: e["expiry"] for e in data.get("expiryData", [])}
                 parsed = sorted(
@@ -382,6 +388,7 @@ class Fyers:
                 )
                 cutoff = datetime.now() + timedelta(days=max_expiry_days)
                 parsed = [(d, e) for d, e in parsed if d <= cutoff]
+                _log.append(f"expiries_total={len(parsed)}")
 
                 if expiry_mode == "NEAR_MONTH":
                     expiry_list = parsed[:1]
@@ -392,14 +399,17 @@ class Fyers:
                         (d, e) for d, e in parsed
                         if min_days_to_expiry <= (d - datetime.now()).days <= 60
                     ] or parsed
+                _log.append(f"expiries_filtered={len(expiry_list)}")
 
                 best_ce_score, best_pe_score = -1.0, -1.0
                 best_ce, best_pe = None, None
                 best_exp_info = None
 
+                # ─── 3. Loop through each expiry ─────────────────────────
                 for exp_date, exp_epoch in expiry_list:
                     dte = max((exp_date - datetime.now()).days, 0)
                     if dte < min_days_to_expiry:
+                        _log.append(f"skip_exp={exp_date.strftime('%d%b')} dte={dte}<{min_days_to_expiry}")
                         continue
 
                     oc = self.api.optionchain(data={
@@ -408,22 +418,33 @@ class Fyers:
                     })
                     chain = oc.get("data", {}).get("optionsChain", [])
                     df = pd.DataFrame(chain)
+                    if df.empty:
+                        _log.append(f"exp={exp_date.strftime('%d%b')} chain=EMPTY")
+                        continue
+
                     df = df[df["option_type"].isin(["CE", "PE"])]
                     if df.empty:
+                        _log.append(f"exp={exp_date.strftime('%d%b')} CE+PE=0")
                         continue
 
                     df = _numeric(df, [
                         "strike_price", "oi", "prev_oi", "volume",
                         "ask", "bid", "ltp", "iv",
                     ])
+                    rows_before = len(df)
                     df = df[(df["ltp"] <= max_premium_per_lot) & (df["ltp"] > 5)]
                     df = df[(df["oi"] >= min_oi_threshold) | (df["volume"] > 100)]
                     if df.empty:
+                        _log.append(f"exp={exp_date.strftime('%d%b')} rows={rows_before}->0(filtered)")
                         continue
 
-                    for otype, best_ref, best_sc in [("CE", "ce", best_ce_score), ("PE", "pe", best_pe_score)]:
+                    _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}")
+
+                    # ─── 4. Score CE and PE separately ────────────────────
+                    for otype in ["CE", "PE"]:
                         sub = df[df["option_type"] == otype].copy()
                         if sub.empty:
+                            _log.append(f"  {otype}=0rows")
                             continue
                         sub["score"] = (
                             sub["ltp"].apply(lambda x: _affordability(x, max_premium_per_lot)) * 0.20
@@ -435,6 +456,7 @@ class Fyers:
                         ).clip(0, 1)
                         idx = sub["score"].idxmax()
                         sc = sub.loc[idx, "score"]
+                        _log.append(f"  {otype}: best={sc:.3f} sym={sub.loc[idx, 'symbol']} strike={sub.loc[idx, 'strike_price']}")
                         if otype == "CE" and sc > best_ce_score:
                             best_ce_score = sc
                             best_ce = sub.loc[idx]
@@ -445,23 +467,28 @@ class Fyers:
                             if best_exp_info is None:
                                 best_exp_info = (exp_date, dte, vix)
 
+                # ─── 5. Final decision ────────────────────────────────────
                 combined = (
                     (best_ce_score + best_pe_score) / 2
                     if best_ce is not None and best_pe is not None
                     else max(best_ce_score, best_pe_score)
                 )
+                _log.append(f"combined={combined:.3f} threshold={min_trend_score}")
 
                 if combined < min_trend_score or (best_ce is None and best_pe is None):
+                    msg = f"No suitable options (CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"
                     return {"Recommended": False, "Symbol": symbol,
-                            "Message": f"No suitable options (CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"}
+                            "Message": msg, "Debug": " | ".join(_log)}
 
                 # BOTH CE and PE must be found for a valid pair
                 if best_ce is None or best_pe is None:
                     missing = "CE" if best_ce is None else "PE"
+                    msg = f"Only one side found ({missing} missing, CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"
                     return {"Recommended": False, "Symbol": symbol,
-                            "Message": f"Only one side found ({missing} missing, CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"}
+                            "Message": msg, "Debug": " | ".join(_log)}
 
                 exp_date, dte, vix = best_exp_info
+                _log.append(f"SELECTED CE={best_ce['symbol']} PE={best_pe['symbol']}")
                 return {
                     "Recommended": True,
                     "CE_Symbol": best_ce["symbol"],
@@ -474,12 +501,15 @@ class Fyers:
                     "Days_To_Expiry": dte,
                     "Trend_Score": float(combined),
                     "VIX": float(vix),
+                    "Debug": " | ".join(_log),
                 }
 
             except Exception as e:
+                _log.append(f"attempt{attempt}_err: {e}")
                 if attempt == max_retries:
                     return {"Recommended": False, "Symbol": symbol,
-                            "Message": f"Failed after {max_retries} attempts: {e}"}
+                            "Message": f"Failed after {max_retries} attempts: {e}",
+                            "Debug": " | ".join(_log)}
                 _time.sleep(retry_delay)
 
     # ╔══════════════════════════════════════════════════════════════════════════╗

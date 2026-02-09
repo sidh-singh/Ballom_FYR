@@ -157,9 +157,10 @@ def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df) -> int:
         qty_times  = entry.get("qty_times", 1)
 
         pair = fyers.fetch_option_pair(underlying, asset_type="INDEX")
+        debug_trail = pair.get("Debug", "")
         if not pair.get("Recommended"):
             log_strategy_event(symbol_key, "SCAN", "SKIP_INDEX",
-                               details=pair.get("Message", "skipped"))
+                               details=f"{pair.get('Message', 'skipped')} || {debug_trail}")
             continue
 
         try:
@@ -191,7 +192,7 @@ def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df) -> int:
         }
         log_strategy_event(
             symbol_key, "SCAN", "INDEX_PAIR_FOUND", qty=qty,
-            details=f"CE={ce_sym} PE={pe_sym} Exp={pair['Expiry']}",
+            details=f"CE={ce_sym} PE={pe_sym} Exp={pair['Expiry']} || {pair.get('Debug', '')}",
         )
 
     log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_DONE",
@@ -229,9 +230,10 @@ def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> in
             max_premium_per_lot=55000,
             min_trend_score=0.35,
         )
+        debug_trail = pair.get("Debug", "")
         if not pair.get("Recommended"):
             log_strategy_event(symbol_key, "SCAN", "SKIP_COMMODITY",
-                               details=pair.get("Message", "skipped"))
+                               details=f"{pair.get('Message', 'skipped')} || {debug_trail}")
             continue
 
         try:
@@ -263,7 +265,7 @@ def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> in
         }
         log_strategy_event(
             symbol_key, "SCAN", "COMMODITY_PAIR_FOUND", qty=qty,
-            details=f"CE={ce_sym} PE={pe_sym} UND={actual}",
+            details=f"CE={ce_sym} PE={pe_sym} UND={actual} || {pair.get('Debug', '')}",
         )
 
     log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
@@ -727,20 +729,23 @@ def main():
                             sleep(10)   # back off before retry
 
                 if indices_scanned_today:
-                    try:
-                        current_day = inner_loop(
-                            fyers, strategy,
-                            pairs_json=OPTION_PAIRS_JSON,
-                            market_type="INDEX",
-                            holidays=holidays,
-                            special_sessions=special_sessions,
-                            inner_day_ref=current_day,
-                            mode=mode,
-                            tracker=tracker,
-                        )
-                    except Exception as e:
-                        log_strategy_event("SYSTEM", "INNER", "INDEX_LOOP_FAIL",
-                                           details=str(e))
+                    # ── INNER LOOP DISABLED FOR DEBUGGING ──────────────────
+                    log_strategy_event("SYSTEM", "DEBUG", "INDEX_SCAN_COMPLETE",
+                                       details="Inner loop disabled — scan-only debug mode")
+                    # try:
+                    #     current_day = inner_loop(
+                    #         fyers, strategy,
+                    #         pairs_json=OPTION_PAIRS_JSON,
+                    #         market_type="INDEX",
+                    #         holidays=holidays,
+                    #         special_sessions=special_sessions,
+                    #         inner_day_ref=current_day,
+                    #         mode=mode,
+                    #         tracker=tracker,
+                    #     )
+                    # except Exception as e:
+                    #     log_strategy_event("SYSTEM", "INNER", "INDEX_LOOP_FAIL",
+                    #                        details=str(e))
 
         # ── Step 3b: COMMODITY window (ONLY after indices close) ───────────
         elif in_commodity_window and not in_indices_window:
@@ -772,20 +777,23 @@ def main():
                             sleep(10)
 
                 if commodities_scanned_today:
-                    try:
-                        current_day = inner_loop(
-                            fyers, strategy,
-                            pairs_json=COMMODITY_PAIRS_JSON,
-                            market_type="COMMODITY",
-                            holidays=holidays,
-                            special_sessions=special_sessions,
-                            inner_day_ref=current_day,
-                            mode=mode,
-                            tracker=tracker,
-                        )
-                    except Exception as e:
-                        log_strategy_event("SYSTEM", "INNER", "COMMODITY_LOOP_FAIL",
-                                           details=str(e))
+                    # ── INNER LOOP DISABLED FOR DEBUGGING ──────────────────
+                    log_strategy_event("SYSTEM", "DEBUG", "COMMODITY_SCAN_COMPLETE",
+                                       details="Inner loop disabled — scan-only debug mode")
+                    # try:
+                    #     current_day = inner_loop(
+                    #         fyers, strategy,
+                    #         pairs_json=COMMODITY_PAIRS_JSON,
+                    #         market_type="COMMODITY",
+                    #         holidays=holidays,
+                    #         special_sessions=special_sessions,
+                    #         inner_day_ref=current_day,
+                    #         mode=mode,
+                    #         tracker=tracker,
+                    #     )
+                    # except Exception as e:
+                    #     log_strategy_event("SYSTEM", "INNER", "COMMODITY_LOOP_FAIL",
+                    #                        details=str(e))
         else:
             # Outside all trading windows
             write_app_status(mode, str(current_day), status="idle",
