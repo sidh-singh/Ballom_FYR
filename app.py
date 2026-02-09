@@ -732,20 +732,20 @@ def main():
                     # ── INNER LOOP DISABLED FOR DEBUGGING ──────────────────
                     log_strategy_event("SYSTEM", "DEBUG", "INDEX_SCAN_COMPLETE",
                                        details="Inner loop disabled — scan-only debug mode")
-                    # try:
-                    #     current_day = inner_loop(
-                    #         fyers, strategy,
-                    #         pairs_json=OPTION_PAIRS_JSON,
-                    #         market_type="INDEX",
-                    #         holidays=holidays,
-                    #         special_sessions=special_sessions,
-                    #         inner_day_ref=current_day,
-                    #         mode=mode,
-                    #         tracker=tracker,
-                    #     )
-                    # except Exception as e:
-                    #     log_strategy_event("SYSTEM", "INNER", "INDEX_LOOP_FAIL",
-                    #                        details=str(e))
+                    try:
+                        current_day = inner_loop(
+                            fyers, strategy,
+                            pairs_json=OPTION_PAIRS_JSON,
+                            market_type="INDEX",
+                            holidays=holidays,
+                            special_sessions=special_sessions,
+                            inner_day_ref=current_day,
+                            mode=mode,
+                            tracker=tracker,
+                        )
+                    except Exception as e:
+                        log_strategy_event("SYSTEM", "INNER", "INDEX_LOOP_FAIL",
+                                           details=str(e))
 
         # ── Step 3b: COMMODITY window (ONLY after indices close) ───────────
         elif in_commodity_window and not in_indices_window:
@@ -780,20 +780,20 @@ def main():
                     # ── INNER LOOP DISABLED FOR DEBUGGING ──────────────────
                     log_strategy_event("SYSTEM", "DEBUG", "COMMODITY_SCAN_COMPLETE",
                                        details="Inner loop disabled — scan-only debug mode")
-                    # try:
-                    #     current_day = inner_loop(
-                    #         fyers, strategy,
-                    #         pairs_json=COMMODITY_PAIRS_JSON,
-                    #         market_type="COMMODITY",
-                    #         holidays=holidays,
-                    #         special_sessions=special_sessions,
-                    #         inner_day_ref=current_day,
-                    #         mode=mode,
-                    #         tracker=tracker,
-                    #     )
-                    # except Exception as e:
-                    #     log_strategy_event("SYSTEM", "INNER", "COMMODITY_LOOP_FAIL",
-                    #                        details=str(e))
+                    try:
+                        current_day = inner_loop(
+                            fyers, strategy,
+                            pairs_json=COMMODITY_PAIRS_JSON,
+                            market_type="COMMODITY",
+                            holidays=holidays,
+                            special_sessions=special_sessions,
+                            inner_day_ref=current_day,
+                            mode=mode,
+                            tracker=tracker,
+                        )
+                    except Exception as e:
+                        log_strategy_event("SYSTEM", "INNER", "COMMODITY_LOOP_FAIL",
+                                           details=str(e))
         else:
             # Outside all trading windows
             write_app_status(mode, str(current_day), status="idle",
