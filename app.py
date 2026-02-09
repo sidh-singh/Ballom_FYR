@@ -302,6 +302,8 @@ def get_symbol_details(
 
     Returns (lt_symbol_power, lt_symbol_list, crossover, sha_debug).
     """
+    import math
+
     lt_sha = SmoothedHeikenAshi.calculate(
         df=raw_df,
         smooth_length=sha_length,
@@ -317,11 +319,26 @@ def get_symbol_details(
     sha_debug = []
 
     for i in range(-1, -8, -1):
-        ha_range = abs(lt_sha["High"].iloc[i] - lt_sha["Low"].iloc[i])
+        sha_o = lt_sha["Open"].iloc[i]
+        sha_h = lt_sha["High"].iloc[i]
+        sha_l = lt_sha["Low"].iloc[i]
+        sha_c = lt_sha["Close"].iloc[i]
+
+        # Guard against NaN SHA values (insufficient candles)
+        if math.isnan(sha_o) or math.isnan(sha_h) or math.isnan(sha_l) or math.isnan(sha_c):
+            lt_symbol_list.append(0)
+            crossover.append(-2)
+            sha_debug.append({
+                "ts": str(raw_df["Timestamp"].iloc[i]) if "Timestamp" in raw_df.columns else "",
+                "O": 0, "H": 0, "L": 0, "C": 0, "dir": "NaN",
+            })
+            continue
+
+        ha_range = abs(sha_h - sha_l)
         if ha_range == 0:
             ha_range = 1e-9
 
-        lt_diff = (lt_sha["Close"].iloc[i] - lt_sha["Open"].iloc[i]) / ha_range
+        lt_diff = (sha_c - sha_o) / ha_range
 
         lt_sha_diff = 1 if lt_diff >= threshold else 0
         lt_symbol_list.append(lt_sha_diff)
@@ -329,20 +346,18 @@ def get_symbol_details(
 
         ct_p_high = raw_df["High"].iloc[i]
         ct_p_low = raw_df["Low"].iloc[i]
-        lt_sha_high = lt_sha["High"].iloc[i]
-        lt_sha_low = lt_sha["Low"].iloc[i]
 
         if lt_sha_diff == 1:
-            if ct_p_low >= lt_sha_high:
+            if ct_p_low >= sha_h:
                 crossover.append(3)
-            elif ct_p_high <= lt_sha_low:
+            elif ct_p_high <= sha_l:
                 crossover.append(1)
             else:
                 crossover.append(2)
         else:
-            if ct_p_high <= lt_sha_low:
+            if ct_p_high <= sha_l:
                 crossover.append(-3)
-            elif ct_p_low >= lt_sha_high:
+            elif ct_p_low >= sha_h:
                 crossover.append(-1)
             else:
                 crossover.append(-2)
@@ -351,10 +366,10 @@ def get_symbol_details(
         ts = str(raw_df["Timestamp"].iloc[i]) if "Timestamp" in raw_df.columns else ""
         sha_debug.append({
             "ts": ts,
-            "O": round(float(lt_sha["Open"].iloc[i]), 2),
-            "H": round(float(lt_sha["High"].iloc[i]), 2),
-            "L": round(float(lt_sha["Low"].iloc[i]), 2),
-            "C": round(float(lt_sha["Close"].iloc[i]), 2),
+            "O": round(float(sha_o), 2),
+            "H": round(float(sha_h), 2),
+            "L": round(float(sha_l), 2),
+            "C": round(float(sha_c), 2),
             "dir": "BULL" if lt_sha_diff == 1 else "BEAR",
         })
 
