@@ -146,8 +146,9 @@ def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df):
     """
     For each index in config, call the option-chain scanner,
     look up lot size from the downloaded NSE F&O CSV, and dump to JSON.
+    Fresh scan each time — stale entries are NOT preserved.
     """
-    result = _load_json(OPTION_PAIRS_JSON)
+    result = {}   # ← fresh start: don't carry over stale/broken entries
 
     for entry in indices:
         symbol_key = entry["symbol"]
@@ -191,8 +192,9 @@ def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df):
     """
     For each enabled commodity, resolve to active futures symbol,
     scan option chain, look up lot size from MCX CSV, dump to JSON.
+    Fresh scan each time — stale entries are NOT preserved.
     """
-    result = _load_json(COMMODITY_PAIRS_JSON)
+    result = {}   # ← fresh start: don't carry over stale/broken entries
 
     for entry in commodities:
         if not entry.get("enabled", True):
@@ -367,8 +369,14 @@ def inner_loop(
     pairs = _load_json(pairs_json)
     if not pairs:
         write_app_status(mode, str(inner_day_ref), status="idle",
-                         message="No pairs in JSON — nothing to trade")
+                         message=f"No pairs in {pairs_json.name} — nothing to trade")
+        log_strategy_event("SYSTEM", "INNER", "NO_PAIRS",
+                           details=f"File: {pairs_json} | market_type={market_type}")
         return inner_day_ref
+
+    # Log how many pairs we loaded for diagnostics
+    log_strategy_event("SYSTEM", "INNER", "LOADED",
+                       details=f"{len(pairs)} pairs from {pairs_json.name} for {market_type}")
 
     current_day = inner_day_ref
 
@@ -379,14 +387,14 @@ def inner_loop(
         base_qty   = info.get("qty", 0)
 
         if not ce_symbol or not pe_symbol or not underlying:
-            log_strategy_event(symbol_key, "INNER", "SKIP",
-                               details="Incomplete pair — skipping")
+            log_strategy_event(symbol_key, "INNER", "SKIP_INCOMPLETE",
+                               details=f"CE={ce_symbol!r} PE={pe_symbol!r} UND={underlying!r} — incomplete")
             continue
 
         # ── Skip if pair doesn't match current market_type ────────────────
         pair_type = "INDEX" if info.get("indices") else "COMMODITY"
         if pair_type != market_type:
-            log_strategy_event(symbol_key, "INNER", "SKIP",
+            log_strategy_event(symbol_key, "INNER", "SKIP_TYPE",
                                details=f"Wrong market type (expected {market_type}, got {pair_type})")
             continue
 
@@ -538,17 +546,31 @@ def main():
     indices     = config.get("indices", [])
     commodities = config.get("commodities", [])
 
+    # ── dump initial account state so dashboard shows balance immediately ──
+    try:
+        _dump_positions_and_account(fyers)
+    except Exception as e:
+        log_strategy_event("SYSTEM", "INIT", "ACCOUNT_DUMP_FAIL", details=str(e))
+
     # ── first-time daily setup ─────────────────────────────────────────────
     current_day = date.today()
-    option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=False)
+    try:
+        option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=False)
+    except Exception as e:
+        log_strategy_event("SYSTEM", "INIT", "DAILY_SETUP_FAIL", details=str(e))
+        option_df, mcx_df, holidays, special_sessions = None, None, set(), []
+
     indices_scanned_today    = False
     commodities_scanned_today = False
 
     # ── fetch holidays for current year (and next year in December) ─────────
     current_year = current_day.year
-    Fyers.fetch_trading_holidays(current_year)
-    if current_day.month == 12:
-        Fyers.fetch_trading_holidays(current_year + 1)
+    try:
+        Fyers.fetch_trading_holidays(current_year)
+        if current_day.month == 12:
+            Fyers.fetch_trading_holidays(current_year + 1)
+    except Exception as e:
+        log_strategy_event("SYSTEM", "INIT", "HOLIDAY_FETCH_FAIL", details=str(e))
 
     write_app_status(mode, str(current_day), status="started",
                      message=f"Daily setup complete | brake={'ON' if brake else 'OFF'}")
@@ -562,15 +584,21 @@ def main():
         if today != current_day:
             current_day = today
             tracker.reset_for_new_day()
-            option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=True)
+            try:
+                option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=True)
+            except Exception as e:
+                log_strategy_event("SYSTEM", "OUTER", "DAILY_SETUP_FAIL", details=str(e))
             indices_scanned_today     = False
             commodities_scanned_today = False
 
-            if today.year != current_year:
-                current_year = today.year
-                Fyers.fetch_trading_holidays(current_year)
-            if today.month == 12:
-                Fyers.fetch_trading_holidays(current_year + 1)
+            try:
+                if today.year != current_year:
+                    current_year = today.year
+                    Fyers.fetch_trading_holidays(current_year)
+                if today.month == 12:
+                    Fyers.fetch_trading_holidays(current_year + 1)
+            except Exception as e:
+                log_strategy_event("SYSTEM", "OUTER", "HOLIDAY_FETCH_FAIL", details=str(e))
 
             write_app_status(mode, str(current_day), status="new_day",
                              message=f"Daily setup complete for {current_day}")
@@ -594,6 +622,12 @@ def main():
             status="running",
         )
 
+        # ── Always dump account state so dashboard has fresh balance ───────
+        try:
+            _dump_positions_and_account(fyers)
+        except Exception:
+            pass   # non-critical — don't crash the loop
+
         # ── Step 3a: INDICES window (FIRST PRIORITY — ALWAYS) ─────────────
         if in_indices_window:
             # During indices hours, ONLY process indices — never commodities
@@ -604,19 +638,28 @@ def main():
                 if not indices_scanned_today:
                     write_app_status(mode, str(current_day), status="scanning",
                                      message="Scanning INDEX option pairs …")
-                    scan_and_dump_index_pairs(fyers, indices, option_df)
-                    indices_scanned_today = True
+                    try:
+                        scan_and_dump_index_pairs(fyers, indices, option_df)
+                        indices_scanned_today = True
+                    except Exception as e:
+                        log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_FAIL",
+                                           details=str(e))
 
-                current_day = inner_loop(
-                    fyers, strategy,
-                    pairs_json=OPTION_PAIRS_JSON,
-                    market_type="INDEX",
-                    holidays=holidays,
-                    special_sessions=special_sessions,
-                    inner_day_ref=current_day,
-                    mode=mode,
-                    tracker=tracker,
-                )
+                if indices_scanned_today:
+                    try:
+                        current_day = inner_loop(
+                            fyers, strategy,
+                            pairs_json=OPTION_PAIRS_JSON,
+                            market_type="INDEX",
+                            holidays=holidays,
+                            special_sessions=special_sessions,
+                            inner_day_ref=current_day,
+                            mode=mode,
+                            tracker=tracker,
+                        )
+                    except Exception as e:
+                        log_strategy_event("SYSTEM", "INNER", "INDEX_LOOP_FAIL",
+                                           details=str(e))
 
         # ── Step 3b: COMMODITY window (ONLY after indices close — NEVER during indices hours) ─────────
         elif in_commodity_window and not in_indices_window:
@@ -628,19 +671,28 @@ def main():
                 if not commodities_scanned_today:
                     write_app_status(mode, str(current_day), status="scanning",
                                      message="Scanning COMMODITY option pairs …")
-                    scan_and_dump_commodity_pairs(fyers, commodities, mcx_df)
-                    commodities_scanned_today = True
+                    try:
+                        scan_and_dump_commodity_pairs(fyers, commodities, mcx_df)
+                        commodities_scanned_today = True
+                    except Exception as e:
+                        log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_FAIL",
+                                           details=str(e))
 
-                current_day = inner_loop(
-                    fyers, strategy,
-                    pairs_json=COMMODITY_PAIRS_JSON,
-                    market_type="COMMODITY",
-                    holidays=holidays,
-                    special_sessions=special_sessions,
-                    inner_day_ref=current_day,
-                    mode=mode,
-                    tracker=tracker,
-                )
+                if commodities_scanned_today:
+                    try:
+                        current_day = inner_loop(
+                            fyers, strategy,
+                            pairs_json=COMMODITY_PAIRS_JSON,
+                            market_type="COMMODITY",
+                            holidays=holidays,
+                            special_sessions=special_sessions,
+                            inner_day_ref=current_day,
+                            mode=mode,
+                            tracker=tracker,
+                        )
+                    except Exception as e:
+                        log_strategy_event("SYSTEM", "INNER", "COMMODITY_LOOP_FAIL",
+                                           details=str(e))
         else:
             # Outside all trading windows
             write_app_status(mode, str(current_day), status="idle",

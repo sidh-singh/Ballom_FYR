@@ -327,7 +327,7 @@ def _action_badge(action: str) -> html.Span:
     if "MARTINGALE" in act_upper:
         bg, fg, glow = "#9b59b6", "#f0e6f6", "rgba(155, 89, 182, 0.3)"
         icon = "\u26a1"
-    elif "EXIT" in act_upper or "CLOSE" in act_upper:
+    elif "EXIT" in act_upper or "CLOSE" in act_upper or "ALL_CLOSED" in act_upper:
         if "PROFIT" in act_upper:
             bg, fg, glow = "#00d2a0", "#0d2f25", COLORS["positive_glow"]
             icon = "\U0001f4b0"
@@ -343,6 +343,18 @@ def _action_badge(action: str) -> html.Span:
     elif "SELL" in act_upper:
         bg, fg, glow = "#ff6b6b", "#3a1212", COLORS["negative_glow"]
         icon = "\U0001f534"
+    elif "SKIP" in act_upper:
+        bg, fg, glow = "#e67e22", "#3a2412", "rgba(230, 126, 34, 0.3)"
+        icon = "\u23ed\ufe0f"
+    elif "NO_PAIRS" in act_upper:
+        bg, fg, glow = "#c0392b", "#f0e6e6", "rgba(192, 57, 43, 0.3)"
+        icon = "\u274c"
+    elif "FAIL" in act_upper or "ERROR" in act_upper:
+        bg, fg, glow = "#c0392b", "#f0e6e6", "rgba(192, 57, 43, 0.3)"
+        icon = "\U0001f6a8"
+    elif "LOADED" in act_upper or "FOUND" in act_upper:
+        bg, fg, glow = "#27ae60", "#e6f0ea", "rgba(39, 174, 96, 0.3)"
+        icon = "\u2705"
     elif "ANALYSIS" in act_upper or "EVAL" in act_upper:
         bg, fg, glow = "#34495e", "#bdc3c7", "rgba(52, 73, 94, 0.3)"
         icon = "\U0001f50d"
