@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Runtime state files (created at C:/Ballom_FYR/ on Windows, relative C:/ on macOS)
+C:/
+state/
+
+# Fyers token & cache
+fyers_token.json
+cache/
+
+# Demo trading data
+demo/
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
