@@ -321,6 +321,14 @@ def _signal_row(label: str, icon: str, color: str,
     )
 
 
+def _popup_row(label: str, value: str) -> html.Div:
+    """Single key-value row inside the detail popup."""
+    return html.Div(className="popup-row", children=[
+        html.Span(label, className="popup-label"),
+        html.Span(value or "—", className="popup-value"),
+    ])
+
+
 def _action_badge(action: str) -> html.Span:
     """Premium colored pill badge with glow for a strategy action."""
     act_upper = action.upper()
@@ -334,6 +342,9 @@ def _action_badge(action: str) -> html.Span:
         elif "ADVERSE" in act_upper:
             bg, fg, glow = "#e67e22", "#3a2412", "rgba(230, 126, 34, 0.3)"
             icon = "\u26a0\ufe0f"
+        elif "TREND_FLIP" in act_upper:
+            bg, fg, glow = "#e74c3c", "#f0e6e6", "rgba(231, 76, 60, 0.3)"
+            icon = "\U0001f504"
         else:
             bg, fg, glow = "#3498db", "#12283a", "rgba(52, 152, 219, 0.3)"
             icon = "\U0001f504"
@@ -551,6 +562,80 @@ app.index_string = """<!DOCTYPE html>
     .Select-menu-outer { background: #111628 !important; border-color: rgba(99,115,171,0.2) !important; border-radius: 10px !important; }
     .Select-option.is-focused { background: rgba(124,108,240,0.15) !important; }
     .Select-value-label { color: #e8ecf4 !important; }
+
+    /* Strategy Log — detail popup on hover / tap */
+    .log-entry-wrapper {
+        position: relative;
+        cursor: pointer;
+        outline: none;
+        border-radius: 8px;
+        transition: background 0.2s ease;
+    }
+    .log-entry-wrapper:hover,
+    .log-entry-wrapper:focus-within {
+        background: rgba(124, 108, 240, 0.06);
+    }
+    .log-detail-popup {
+        display: none;
+        position: absolute;
+        left: 0;
+        top: 100%;
+        width: 100%;
+        max-height: 380px;
+        overflow-y: auto;
+        background: #141929;
+        border: 1px solid rgba(124, 108, 240, 0.30);
+        border-radius: 14px;
+        padding: 16px 18px;
+        box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 20px rgba(124,108,240,0.15);
+        z-index: 9999;
+        font-family: 'Inter', sans-serif;
+        animation: popIn 0.18s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    /* Desktop: show on hover */
+    .log-entry-wrapper:hover .log-detail-popup {
+        display: block;
+    }
+    /* Touch/mobile: show on tap (focus) */
+    .log-entry-wrapper:focus-within .log-detail-popup {
+        display: block;
+    }
+    @media (max-width: 900px) {
+        .log-detail-popup {
+            width: 100%;
+        }
+    }
+    @keyframes popIn {
+        from { opacity: 0; transform: translateX(8px) scale(0.97); }
+        to   { opacity: 1; transform: translateX(0) scale(1); }
+    }
+    .log-detail-popup .popup-header {
+        font-size: 0.72rem; font-weight: 700; letter-spacing: 1.5px;
+        color: #7c6cf0; text-transform: uppercase; margin-bottom: 10px;
+        border-bottom: 1px solid rgba(99,115,171,0.15); padding-bottom: 8px;
+    }
+    .log-detail-popup .popup-row {
+        display: flex; justify-content: space-between; align-items: flex-start;
+        padding: 5px 0; border-bottom: 1px solid rgba(99,115,171,0.06);
+    }
+    .log-detail-popup .popup-row:last-child { border-bottom: none; }
+    .log-detail-popup .popup-label {
+        font-size: 0.65rem; font-weight: 600; color: #5a6580;
+        letter-spacing: 0.5px; text-transform: uppercase; min-width: 70px;
+        flex-shrink: 0;
+    }
+    .log-detail-popup .popup-value {
+        font-size: 0.75rem; color: #e8ecf4;
+        font-family: 'JetBrains Mono', monospace;
+        text-align: right; word-break: break-all; max-width: 230px;
+    }
+    .log-detail-popup .popup-details-block {
+        margin-top: 8px; padding: 10px 12px;
+        background: rgba(10, 14, 26, 0.6); border-radius: 8px;
+        font-size: 0.7rem; color: #a3adc4; line-height: 1.55;
+        font-family: 'JetBrains Mono', monospace;
+        word-break: break-word; white-space: pre-wrap;
+    }
 </style>
 </head>
 <body>
@@ -790,7 +875,7 @@ def refresh_dashboard(_n, selected_mode):
     # Positions table
     positions = pos_data.get("positions", [])
     if positions:
-        cols = ["symbol", "netQty", "netAvg", "ltp", "unrealized_profit", "productType"]
+        cols = ["symbol", "netQty", "netAvg", "ltp", "realized_profit", "unrealized_profit", "productType"]
         rows = [{c: p.get(c, "") for c in cols} for p in positions]
         pos_table = dash_table.DataTable(
             data=rows,
@@ -799,6 +884,7 @@ def refresh_dashboard(_n, selected_mode):
                 {"name": "Qty", "id": "netQty"},
                 {"name": "Avg Price", "id": "netAvg"},
                 {"name": "LTP", "id": "ltp"},
+                {"name": "Realized P&L", "id": "realized_profit"},
                 {"name": "Unrealized P&L", "id": "unrealized_profit"},
                 {"name": "Product", "id": "productType"},
             ],
@@ -819,6 +905,12 @@ def refresh_dashboard(_n, selected_mode):
                 "fontFamily": "'JetBrains Mono', monospace",
             },
             style_data_conditional=[
+                {"if": {"filter_query": "{realized_profit} > 0",
+                        "column_id": "realized_profit"},
+                 "color": COLORS["positive"], "fontWeight": "bold"},
+                {"if": {"filter_query": "{realized_profit} < 0",
+                        "column_id": "realized_profit"},
+                 "color": COLORS["negative"], "fontWeight": "bold"},
                 {"if": {"filter_query": "{unrealized_profit} > 0",
                         "column_id": "unrealized_profit"},
                  "color": COLORS["positive"], "fontWeight": "bold"},
@@ -984,7 +1076,34 @@ def refresh_dashboard(_n, selected_mode):
             leg_color = "#5dade2" if leg == "CE" else "#ff6b6b" if leg == "PE" else "#ffd93d"
             details_text = entry.get("details", "")
 
-            row = html.Div(style={
+            # ── build detail popup ────────────────────────────────────
+            popup_pl_col = COLORS["positive"] if pl_val >= 0 else COLORS["negative"]
+            popup_rows = [
+                html.Div(className="popup-header", children="📋 Event Details"),
+                _popup_row("Timestamp", ts_raw),
+                _popup_row("Symbol", sym_raw),
+                _popup_row("Action", action),
+                _popup_row("Leg", leg or "—"),
+            ]
+            if qty_val:
+                popup_rows.append(_popup_row("Quantity", str(qty_val)))
+            if pl_val != 0:
+                popup_rows.append(
+                    html.Div(className="popup-row", children=[
+                        html.Span("P&L", className="popup-label"),
+                        html.Span(f"₹{pl_val:,.2f}", className="popup-value",
+                                  style={"color": popup_pl_col, "fontWeight": "700"}),
+                    ])
+                )
+            if details_text:
+                popup_rows.append(
+                    html.Div(className="popup-details-block", children=details_text)
+                )
+
+            detail_popup = html.Div(className="log-detail-popup", children=popup_rows)
+
+            # ── the visible row ───────────────────────────────────────
+            row_inner = html.Div(style={
                 "display": "grid", "gridTemplateColumns": "56px 1fr auto",
                 "gap": "8px", "alignItems": "start", "padding": "9px 0",
                 "borderBottom": f"1px solid {COLORS['divider']}",
@@ -1018,6 +1137,13 @@ def refresh_dashboard(_n, selected_mode):
                 ]),
                 html.Div(children=pl_children, style={"textAlign": "right", "minWidth": "55px"}),
             ])
+
+            # Wrapper: focusable for touch, hoverable for desktop
+            row = html.Div(
+                className="log-entry-wrapper",
+                tabIndex=0,
+                children=[row_inner, detail_popup],
+            )
             log_entries.append(row)
 
     if not log_entries:
