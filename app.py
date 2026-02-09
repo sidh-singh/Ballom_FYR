@@ -142,11 +142,12 @@ def _dump_positions_and_account(fyers: Fyers) -> None:
 #  OPTION-PAIR SCANNING  → JSON
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df):
+def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df) -> int:
     """
     For each index in config, call the option-chain scanner,
     look up lot size from the downloaded NSE F&O CSV, and dump to JSON.
     Fresh scan each time — stale entries are NOT preserved.
+    Returns the number of valid pairs found.
     """
     result = {}   # ← fresh start: don't carry over stale/broken entries
 
@@ -196,13 +197,15 @@ def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df):
     log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_DONE",
                        details=f"{len(result)} valid index pairs found")
     _write_json_atomic(OPTION_PAIRS_JSON, result)
+    return len(result)
 
 
-def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df):
+def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> int:
     """
     For each enabled commodity, resolve to active futures symbol,
     scan option chain, look up lot size from MCX CSV, dump to JSON.
     Fresh scan each time — stale entries are NOT preserved.
+    Returns the number of valid pairs found.
     """
     result = {}   # ← fresh start: don't carry over stale/broken entries
 
@@ -266,6 +269,7 @@ def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df):
     log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
                        details=f"{len(result)} valid commodity pairs found")
     _write_json_atomic(COMMODITY_PAIRS_JSON, result)
+    return len(result)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -590,13 +594,21 @@ def main():
 
     # ── first-time daily setup ─────────────────────────────────────────────
     current_day = date.today()
+    option_df  = None
+    mcx_df     = None
+    holidays   = set()
+    special_sessions = []
+    setup_ok   = False                    # tracks whether daily_setup succeeded
+
     try:
         option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=False)
+        setup_ok = True
+        log_strategy_event("SYSTEM", "INIT", "DAILY_SETUP_OK",
+                           details=f"Auth + CSV downloads done for {current_day}")
     except Exception as e:
         log_strategy_event("SYSTEM", "INIT", "DAILY_SETUP_FAIL", details=str(e))
-        option_df, mcx_df, holidays, special_sessions = None, None, set(), []
 
-    indices_scanned_today    = False
+    indices_scanned_today     = False
     commodities_scanned_today = False
 
     # ── fetch holidays for current year (and next year in December) ─────────
@@ -609,7 +621,7 @@ def main():
         log_strategy_event("SYSTEM", "INIT", "HOLIDAY_FETCH_FAIL", details=str(e))
 
     write_app_status(mode, str(current_day), status="started",
-                     message=f"Daily setup complete | brake={'ON' if brake else 'OFF'}")
+                     message=f"Daily setup {'OK' if setup_ok else 'FAILED'} | brake={'ON' if brake else 'OFF'}")
 
     # ── outer loop (forever) ───────────────────────────────────────────────
     while True:
@@ -620,8 +632,12 @@ def main():
         if today != current_day:
             current_day = today
             tracker.reset_for_new_day()
+            setup_ok = False
             try:
                 option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=True)
+                setup_ok = True
+                log_strategy_event("SYSTEM", "OUTER", "DAILY_SETUP_OK",
+                                   details=f"New day setup done for {current_day}")
             except Exception as e:
                 log_strategy_event("SYSTEM", "OUTER", "DAILY_SETUP_FAIL", details=str(e))
             indices_scanned_today     = False
@@ -637,14 +653,31 @@ def main():
                 log_strategy_event("SYSTEM", "OUTER", "HOLIDAY_FETCH_FAIL", details=str(e))
 
             write_app_status(mode, str(current_day), status="new_day",
-                             message=f"Daily setup complete for {current_day}")
+                             message=f"Daily setup {'OK' if setup_ok else 'FAILED'} for {current_day}")
+
+        # ── Step 1b: Retry daily_setup if it hasn't succeeded yet ──────────
+        if not setup_ok:
+            try:
+                option_df, mcx_df, holidays, special_sessions = daily_setup(fyers, force_auth=True)
+                setup_ok = True
+                log_strategy_event("SYSTEM", "OUTER", "SETUP_RETRY_OK",
+                                   details="daily_setup retry succeeded")
+            except Exception as e:
+                # Log only once every 30 seconds to avoid flooding
+                write_app_status(mode, str(current_day), status="setup_failed",
+                                 message=f"daily_setup failing: {str(e)[:80]}")
+                sleep(30)
+                continue
 
         # ── Step 2: Determine time window ──────────────────────────────────
         in_indices_window   = INDICES_START <= now <= INDICES_END
         in_commodity_window = COMMODITY_START <= now <= COMMODITY_END
 
         # ── Step 3: Position conflict check ────────────────────────────────
-        pos_df, _ = fyers.position()
+        try:
+            pos_df, _ = fyers.position()
+        except Exception:
+            pos_df = __import__("pandas").DataFrame()
         has_idx_pos  = Fyers.has_index_positions(pos_df)
         has_comm_pos = Fyers.has_commodity_positions(pos_df)
 
@@ -672,14 +705,26 @@ def main():
                                  message="Commodity positions open — skipping indices")
             else:
                 if not indices_scanned_today:
-                    write_app_status(mode, str(current_day), status="scanning",
-                                     message="Scanning INDEX option pairs …")
-                    try:
-                        scan_and_dump_index_pairs(fyers, indices, option_df)
-                        indices_scanned_today = True
-                    except Exception as e:
-                        log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_FAIL",
-                                           details=str(e))
+                    # Guard: option_df must be valid
+                    if option_df is None:
+                        log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_SKIP",
+                                           details="option_df is None — daily_setup may have failed")
+                        sleep(5)
+                    else:
+                        write_app_status(mode, str(current_day), status="scanning",
+                                         message="Scanning INDEX option pairs …")
+                        try:
+                            n_pairs = scan_and_dump_index_pairs(fyers, indices, option_df)
+                            if n_pairs > 0:
+                                indices_scanned_today = True
+                            else:
+                                log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_EMPTY",
+                                                   details="Scan OK but 0 valid pairs — will retry in 60s")
+                                sleep(60)   # avoid API spam; retry next iteration
+                        except Exception as e:
+                            log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_FAIL",
+                                               details=str(e))
+                            sleep(10)   # back off before retry
 
                 if indices_scanned_today:
                     try:
@@ -697,7 +742,7 @@ def main():
                         log_strategy_event("SYSTEM", "INNER", "INDEX_LOOP_FAIL",
                                            details=str(e))
 
-        # ── Step 3b: COMMODITY window (ONLY after indices close — NEVER during indices hours) ─────────
+        # ── Step 3b: COMMODITY window (ONLY after indices close) ───────────
         elif in_commodity_window and not in_indices_window:
             # Commodities can ONLY trade when indices window is completely closed
             if has_idx_pos:
@@ -705,14 +750,26 @@ def main():
                                  message="Index positions open — skipping commodities")
             else:
                 if not commodities_scanned_today:
-                    write_app_status(mode, str(current_day), status="scanning",
-                                     message="Scanning COMMODITY option pairs …")
-                    try:
-                        scan_and_dump_commodity_pairs(fyers, commodities, mcx_df)
-                        commodities_scanned_today = True
-                    except Exception as e:
-                        log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_FAIL",
-                                           details=str(e))
+                    # Guard: mcx_df must be valid
+                    if mcx_df is None:
+                        log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_SKIP",
+                                           details="mcx_df is None — daily_setup may have failed")
+                        sleep(5)
+                    else:
+                        write_app_status(mode, str(current_day), status="scanning",
+                                         message="Scanning COMMODITY option pairs …")
+                        try:
+                            n_pairs = scan_and_dump_commodity_pairs(fyers, commodities, mcx_df)
+                            if n_pairs > 0:
+                                commodities_scanned_today = True
+                            else:
+                                log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_EMPTY",
+                                                   details="Scan OK but 0 valid pairs — will retry in 60s")
+                                sleep(60)
+                        except Exception as e:
+                            log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_FAIL",
+                                               details=str(e))
+                            sleep(10)
 
                 if commodities_scanned_today:
                     try:
