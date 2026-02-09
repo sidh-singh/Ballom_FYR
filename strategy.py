@@ -241,7 +241,7 @@ class HeikenAshiMartingale:
                     log_strategy_event(ce_symbol, "CE", "EXIT_PROFIT",
                                        qty=ce_qty, pl=ce_pl,
                                        details=f"P&L {ce_pl:.2f} > target {self.HEDGE}")
-                elif ce_cross[0] in (1, -1, -2, -3):
+                elif ce_cross[0] in (0):
                     ce_action.status = Transaction.CLOSE_BUY
                     ce_action.qty = ce_qty
                     log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
@@ -320,7 +320,7 @@ class HeikenAshiMartingale:
                     log_strategy_event(pe_symbol, "PE", "EXIT_PROFIT",
                                        qty=pe_qty, pl=pe_pl,
                                        details=f"P&L {pe_pl:.2f} > target {self.HEDGE}")
-                elif pe_cross[0] in (1, -1, -2, -3):
+                elif pe_cross[0] in (0):
                     pe_action.status = Transaction.CLOSE_BUY
                     pe_action.qty = pe_qty
                     log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
