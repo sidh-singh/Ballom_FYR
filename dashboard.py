@@ -828,6 +828,47 @@ app.layout = html.Div(
                                 "fontSize": "15px", "fontWeight": "600",
                                 "color": COLORS["text"], "letterSpacing": "0.3px"}),
                         ]),
+                        # Legend for signal strength
+                        html.Div(style={
+                            "display": "flex", "gap": "20px", "marginBottom": "12px",
+                            "padding": "10px 16px", "background": "rgba(0,0,0,0.15)",
+                            "borderRadius": "10px", "fontSize": "0.7rem",
+                            "color": COLORS["text_dim"], "alignItems": "center",
+                        }, children=[
+                            html.Span("Legend:", style={"fontWeight": "700", "marginRight": "6px"}),
+                            # Bullish (Green)
+                            html.Div(style={"display": "flex", "gap": "6px", "alignItems": "center"}, children=[
+                                html.Span("Bullish:", style={"fontWeight": "600"}),
+                                html.Span(style={
+                                    "display": "inline-block", "width": "10px", "height": "10px",
+                                    "borderRadius": "50%", "background": "#4de8c8"}),
+                                html.Span("Weak"),
+                                html.Span(style={
+                                    "display": "inline-block", "width": "10px", "height": "10px",
+                                    "borderRadius": "50%", "background": "#00d2a0"}),
+                                html.Span("Mild"),
+                                html.Span(style={
+                                    "display": "inline-block", "width": "10px", "height": "10px",
+                                    "borderRadius": "50%", "background": "#009d7a"}),
+                                html.Span("Strong"),
+                            ]),
+                            # Bearish (Red)
+                            html.Div(style={"display": "flex", "gap": "6px", "alignItems": "center"}, children=[
+                                html.Span("Bearish:", style={"fontWeight": "600"}),
+                                html.Span(style={
+                                    "display": "inline-block", "width": "10px", "height": "10px",
+                                    "borderRadius": "50%", "background": "#ee7b6e"}),
+                                html.Span("Weak"),
+                                html.Span(style={
+                                    "display": "inline-block", "width": "10px", "height": "10px",
+                                    "borderRadius": "50%", "background": "#e74c3c"}),
+                                html.Span("Mild"),
+                                html.Span(style={
+                                    "display": "inline-block", "width": "10px", "height": "10px",
+                                    "borderRadius": "50%", "background": "#c0392b"}),
+                                html.Span("Strong"),
+                            ]),
+                        ]),
                         html.Div(id="signal-cards-container"),
                     ]),
                     # RIGHT: strategy log
