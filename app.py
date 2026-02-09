@@ -169,9 +169,17 @@ def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df):
 
         qty = int(lot * qty_times)
 
+        # Validate both CE and PE symbols are non-empty
+        ce_sym = pair.get("CE_Symbol", "")
+        pe_sym = pair.get("PE_Symbol", "")
+        if not ce_sym or not pe_sym:
+            log_strategy_event(symbol_key, "SCAN", "INVALID_PAIR",
+                               details=f"Empty symbol: CE={ce_sym!r} PE={pe_sym!r}")
+            continue
+
         result[symbol_key] = {
-            "CE": pair["CE_Symbol"],
-            "PE": pair["PE_Symbol"],
+            "CE": ce_sym,
+            "PE": pe_sym,
             "CE_Strike": pair["CE_Strike"],
             "PE_Strike": pair["PE_Strike"],
             "Expiry": pair["Expiry"],
@@ -182,9 +190,11 @@ def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df):
         }
         log_strategy_event(
             symbol_key, "SCAN", "INDEX_PAIR_FOUND", qty=qty,
-            details=f"CE={pair['CE_Symbol']} PE={pair['PE_Symbol']}",
+            details=f"CE={ce_sym} PE={pe_sym} Exp={pair['Expiry']}",
         )
 
+    log_strategy_event("SYSTEM", "SCAN", "INDEX_SCAN_DONE",
+                       details=f"{len(result)} valid index pairs found")
     _write_json_atomic(OPTION_PAIRS_JSON, result)
 
 
@@ -229,9 +239,17 @@ def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df):
 
         qty = int(lot * qty_times)
 
+        # Validate both CE and PE symbols are non-empty
+        ce_sym = pair.get("CE_Symbol", "")
+        pe_sym = pair.get("PE_Symbol", "")
+        if not ce_sym or not pe_sym:
+            log_strategy_event(symbol_key, "SCAN", "INVALID_PAIR",
+                               details=f"Empty symbol: CE={ce_sym!r} PE={pe_sym!r}")
+            continue
+
         result[symbol_key] = {
-            "CE": pair["CE_Symbol"],
-            "PE": pair["PE_Symbol"],
+            "CE": ce_sym,
+            "PE": pe_sym,
             "CE_Strike": pair["CE_Strike"],
             "PE_Strike": pair["PE_Strike"],
             "Expiry": pair["Expiry"],
@@ -242,9 +260,11 @@ def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df):
         }
         log_strategy_event(
             symbol_key, "SCAN", "COMMODITY_PAIR_FOUND", qty=qty,
-            details=f"CE={pair['CE_Symbol']} PE={pair['PE_Symbol']}",
+            details=f"CE={ce_sym} PE={pe_sym} UND={actual}",
         )
 
+    log_strategy_event("SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
+                       details=f"{len(result)} valid commodity pairs found")
     _write_json_atomic(COMMODITY_PAIRS_JSON, result)
 
 
@@ -369,17 +389,15 @@ def inner_loop(
     pairs = _load_json(pairs_json)
     if not pairs:
         write_app_status(mode, str(inner_day_ref), status="idle",
-                         message=f"No pairs in {pairs_json.name} — nothing to trade")
+                         message=f"No pairs in {pairs_json.name} — scan may have failed")
         log_strategy_event("SYSTEM", "INNER", "NO_PAIRS",
-                           details=f"File: {pairs_json} | market_type={market_type}")
+                           details=f"Empty file: {pairs_json.name} | market_type={market_type}")
         return inner_day_ref
-
-    # Log how many pairs we loaded for diagnostics
-    log_strategy_event("SYSTEM", "INNER", "LOADED",
-                       details=f"{len(pairs)} pairs from {pairs_json.name} for {market_type}")
 
     current_day = inner_day_ref
 
+    # Filter to only valid, matching pairs
+    valid_pairs = {}
     for symbol_key, info in pairs.items():
         ce_symbol  = info.get("CE", "")
         pe_symbol  = info.get("PE", "")
@@ -388,15 +406,33 @@ def inner_loop(
 
         if not ce_symbol or not pe_symbol or not underlying:
             log_strategy_event(symbol_key, "INNER", "SKIP_INCOMPLETE",
-                               details=f"CE={ce_symbol!r} PE={pe_symbol!r} UND={underlying!r} — incomplete")
+                               details=f"CE={ce_symbol!r} PE={pe_symbol!r} UND={underlying!r}")
             continue
 
-        # ── Skip if pair doesn't match current market_type ────────────────
         pair_type = "INDEX" if info.get("indices") else "COMMODITY"
         if pair_type != market_type:
-            log_strategy_event(symbol_key, "INNER", "SKIP_TYPE",
-                               details=f"Wrong market type (expected {market_type}, got {pair_type})")
+            continue  # silently skip wrong type
+
+        if base_qty <= 0:
+            log_strategy_event(symbol_key, "INNER", "SKIP_QTY",
+                               details=f"Invalid qty={base_qty}")
             continue
+
+        valid_pairs[symbol_key] = info
+
+    if not valid_pairs:
+        log_strategy_event("SYSTEM", "INNER", "NO_VALID_PAIRS",
+                           details=f"{len(pairs)} pairs in file, 0 valid for {market_type}")
+        return inner_day_ref
+
+    log_strategy_event("SYSTEM", "INNER", "TRADING",
+                       details=f"{len(valid_pairs)} valid {market_type} pairs: {', '.join(valid_pairs.keys())}")
+
+    for symbol_key, info in valid_pairs.items():
+        ce_symbol  = info["CE"]
+        pe_symbol  = info["PE"]
+        underlying = info.get("indices", info.get("commodity", ""))
+        base_qty   = info["qty"]
 
         write_app_status(mode, str(current_day), status="trading",
                          message=f"Trading {symbol_key} | CE={ce_symbol} PE={pe_symbol}")

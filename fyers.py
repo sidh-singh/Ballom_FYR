@@ -455,15 +455,21 @@ class Fyers:
                     return {"Recommended": False, "Symbol": symbol,
                             "Message": f"No suitable options (CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"}
 
+                # BOTH CE and PE must be found for a valid pair
+                if best_ce is None or best_pe is None:
+                    missing = "CE" if best_ce is None else "PE"
+                    return {"Recommended": False, "Symbol": symbol,
+                            "Message": f"Only one side found ({missing} missing, CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"}
+
                 exp_date, dte, vix = best_exp_info
                 return {
                     "Recommended": True,
-                    "CE_Symbol": best_ce["symbol"] if best_ce is not None else "",
-                    "PE_Symbol": best_pe["symbol"] if best_pe is not None else "",
-                    "CE_Strike": float(best_ce["strike_price"]) if best_ce is not None else 0,
-                    "PE_Strike": float(best_pe["strike_price"]) if best_pe is not None else 0,
-                    "CE_Premium": float(best_ce["ltp"]) if best_ce is not None else 0,
-                    "PE_Premium": float(best_pe["ltp"]) if best_pe is not None else 0,
+                    "CE_Symbol": best_ce["symbol"],
+                    "PE_Symbol": best_pe["symbol"],
+                    "CE_Strike": float(best_ce["strike_price"]),
+                    "PE_Strike": float(best_pe["strike_price"]),
+                    "CE_Premium": float(best_ce["ltp"]),
+                    "PE_Premium": float(best_pe["ltp"]),
                     "Expiry": exp_date.strftime("%Y-%m-%d"),
                     "Days_To_Expiry": dte,
                     "Trend_Score": float(combined),

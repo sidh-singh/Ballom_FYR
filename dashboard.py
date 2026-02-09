@@ -982,6 +982,7 @@ def refresh_dashboard(_n, selected_mode):
                            "fontFamily": "'JetBrains Mono', monospace"})]
 
             leg_color = "#5dade2" if leg == "CE" else "#ff6b6b" if leg == "PE" else "#ffd93d"
+            details_text = entry.get("details", "")
 
             row = html.Div(style={
                 "display": "grid", "gridTemplateColumns": "56px 1fr auto",
@@ -1003,6 +1004,13 @@ def refresh_dashboard(_n, selected_mode):
                                                     "fontFamily": "'JetBrains Mono', monospace"})
                             if sym_short else None,
                     ]),
+                    html.Span(details_text, style={
+                        "color": COLORS["text_muted"], "fontSize": "0.62rem",
+                        "fontFamily": "'JetBrains Mono', monospace",
+                        "display": "block", "marginTop": "2px",
+                        "overflow": "hidden", "textOverflow": "ellipsis",
+                        "whiteSpace": "nowrap", "maxWidth": "350px"})
+                        if details_text else None,
                     html.Span(f"qty: {qty_val}" if qty_val else "", style={
                         "color": COLORS["text_muted"], "fontSize": "0.68rem",
                         "fontFamily": "'JetBrains Mono', monospace"})
