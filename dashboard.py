@@ -321,6 +321,58 @@ def _signal_row(label: str, icon: str, color: str,
     )
 
 
+def _sha_debug_table(label: str, color: str, sha_list: list) -> html.Div:
+    """Compact SHA OHLC diagnostic table for one leg (CE / PE / IDX).
+    *sha_list* is a list of dicts: [{ts, O, H, L, C, dir}, ...] most-recent first.
+    """
+    if not sha_list:
+        return html.Div()
+
+    mono = "'JetBrains Mono', monospace"
+    hdr_style = {"fontSize": "0.58rem", "fontWeight": "700",
+                 "color": COLORS["text_dim"], "padding": "2px 6px",
+                 "letterSpacing": "0.5px"}
+    cell_style = {"fontSize": "0.62rem", "fontFamily": mono,
+                  "color": COLORS["text_secondary"], "padding": "1px 6px"}
+
+    rows = [
+        html.Tr([
+            html.Th("#", style=hdr_style),
+            html.Th("TIME", style=hdr_style),
+            html.Th("OPEN", style=hdr_style),
+            html.Th("HIGH", style=hdr_style),
+            html.Th("LOW", style=hdr_style),
+            html.Th("CLOSE", style=hdr_style),
+            html.Th("", style=hdr_style),
+        ])
+    ]
+    for i, c in enumerate(sha_list):
+        is_bull = c.get("dir") == "BULL"
+        dot_col = "#00d2a0" if is_bull else "#e74c3c"
+        ts_short = c.get("ts", "")[-8:]  # just HH:MM:SS
+        rows.append(html.Tr([
+            html.Td(f"-{i+1}", style={**cell_style, "color": COLORS["text_muted"]}),
+            html.Td(ts_short, style=cell_style),
+            html.Td(c.get("O", ""), style=cell_style),
+            html.Td(c.get("H", ""), style=cell_style),
+            html.Td(c.get("L", ""), style=cell_style),
+            html.Td(c.get("C", ""), style=cell_style),
+            html.Td(html.Span(style={
+                "display": "inline-block", "width": "7px", "height": "7px",
+                "borderRadius": "50%", "background": dot_col,
+            })),
+        ]))
+
+    return html.Div(style={"marginBottom": "6px"}, children=[
+        html.Span(f"{label} SHA OHLC", style={
+            "fontSize": "0.6rem", "fontWeight": "700", "color": color,
+            "letterSpacing": "0.5px", "marginBottom": "2px", "display": "block"}),
+        html.Table(rows, style={
+            "width": "100%", "borderCollapse": "collapse",
+            "background": "rgba(0,0,0,0.15)", "borderRadius": "6px"}),
+    ])
+
+
 def _popup_row(label: str, value: str) -> html.Div:
     """Single key-value row inside the detail popup."""
     return html.Div(className="popup-row", children=[
@@ -1000,6 +1052,22 @@ def refresh_dashboard(_n, selected_mode):
                         _signal_row("IDX", "\U0001f4ca", "#ffd93d",
                                     idx.get("power", 0), idx.get("list", []), idx_cross),
                     ]),
+                    # SHA OHLC diagnostic tables (compare with TradingView)
+                    html.Details(
+                        open=False,
+                        style={"padding": "0 18px 8px"},
+                        children=[
+                            html.Summary("🔍 SHA Debug OHLC", style={
+                                "fontSize": "0.65rem", "color": COLORS["text_dim"],
+                                "fontWeight": "700", "cursor": "pointer",
+                                "letterSpacing": "0.5px", "marginBottom": "6px",
+                                "listStylePosition": "inside",
+                            }),
+                            _sha_debug_table("CE", "#5dade2", ce.get("sha", [])),
+                            _sha_debug_table("PE", "#ff6b6b", pe.get("sha", [])),
+                            _sha_debug_table("IDX", "#ffd93d", idx.get("sha", [])),
+                        ],
+                    ),
                     # Legend
                     html.Div(style={
                         "padding": "8px 18px 10px",

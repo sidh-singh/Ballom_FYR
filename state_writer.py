@@ -145,6 +145,9 @@ def write_signal_state(
     idx_power: int,
     idx_list: list,
     idx_crossover: list,
+    ce_sha_debug: list | None = None,
+    pe_sha_debug: list | None = None,
+    idx_sha_debug: list | None = None,
 ) -> None:
     """Upsert one symbol's signal data."""
     data = _read_json(SIGNAL_STATE_FILE)
@@ -153,9 +156,12 @@ def write_signal_state(
         "ce_symbol": ce_symbol,
         "pe_symbol": pe_symbol,
         "underlying": underlying,
-        "ce": {"power": ce_power, "list": ce_list, "crossover": ce_crossover},
-        "pe": {"power": pe_power, "list": pe_list, "crossover": pe_crossover},
-        "idx": {"power": idx_power, "list": idx_list, "crossover": idx_crossover},
+        "ce": {"power": ce_power, "list": ce_list, "crossover": ce_crossover,
+               "sha": ce_sha_debug or []},
+        "pe": {"power": pe_power, "list": pe_list, "crossover": pe_crossover,
+               "sha": pe_sha_debug or []},
+        "idx": {"power": idx_power, "list": idx_list, "crossover": idx_crossover,
+                "sha": idx_sha_debug or []},
         "idx_trend": "BULLISH" if idx_list and idx_list[0] == 1 else "BEARISH",
     }
     _write_json_atomic(SIGNAL_STATE_FILE, data)

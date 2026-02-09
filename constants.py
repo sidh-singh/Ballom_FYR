@@ -51,7 +51,7 @@ COMMODITY_END   = dt_time(23, 55)
 SHA_LENGTH          = 7
 SHA_MA_TYPE         = "RMA"
 DEFAULT_TIMEFRAME   = "1"
-DEFAULT_CANDLES     = 100
+DEFAULT_CANDLES     = 500
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

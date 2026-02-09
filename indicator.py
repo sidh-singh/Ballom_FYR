@@ -30,8 +30,21 @@ class SmoothedHeikenAshi:
             weights = np.arange(1, length + 1)
             return series.rolling(length).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
         elif ma_type == 'RMA':
+            # Match TradingView: seed with SMA of first `length` bars,
+            # then apply alpha = 1/length exponential smoothing.
             alpha = 1 / length
-            return series.ewm(alpha=alpha, adjust=False).mean()
+            values = series.values.astype(float)
+            n = len(values)
+            if n < length:
+                return series.ewm(alpha=alpha, adjust=False).mean()
+            out = np.empty(n, dtype=float)
+            # Expanding mean for first `length` bars; at index length-1 this equals SMA(length)
+            cumsum = np.cumsum(values[:length])
+            out[:length] = cumsum / np.arange(1, length + 1)
+            # True RMA from bar `length` onward
+            for i in range(length, n):
+                out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
+            return pd.Series(out, index=series.index)
         elif ma_type == 'VWMA':
             if volume is None:
                 raise ValueError("VWMA requires 'volume' series.")
@@ -61,8 +74,18 @@ class SmoothedHeikenAshi:
             weights = np.array(weights) / np.sum(weights)
             return series.rolling(length).apply(lambda x: np.dot(x, weights), raw=True)
         elif ma_type in ('SMMA', 'SWMA'):
+            # SMMA is equivalent to RMA — use same SMA-seeded initialization
             alpha = 1.0 / length
-            return series.ewm(alpha=alpha, adjust=False).mean()
+            values = series.values.astype(float)
+            n = len(values)
+            if n < length:
+                return series.ewm(alpha=alpha, adjust=False).mean()
+            out = np.empty(n, dtype=float)
+            cumsum = np.cumsum(values[:length])
+            out[:length] = cumsum / np.arange(1, length + 1)
+            for i in range(length, n):
+                out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
+            return pd.Series(out, index=series.index)
         elif ma_type == 'LSMA':
             return series.rolling(length).apply(
                 lambda x: np.polyfit(range(length), x, 1)[0] * (length - 1) + np.polyfit(range(length), x, 1)[1],

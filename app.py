@@ -298,8 +298,9 @@ def get_symbol_details(
         lt_symbol_power  — count of bullish candles in last 7
         lt_symbol_list   — [1|0, ...] most-recent-first
         crossover        — price vs SHA position [-3..-1, 1..3]
+        sha_debug        — last 7 SHA OHLC dicts (most-recent-first) for diagnostics
 
-    Returns (lt_symbol_power, lt_symbol_list, crossover).
+    Returns (lt_symbol_power, lt_symbol_list, crossover, sha_debug).
     """
     lt_sha = SmoothedHeikenAshi.calculate(
         df=raw_df,
@@ -313,6 +314,7 @@ def get_symbol_details(
     lt_symbol_power = 0
     lt_symbol_list = []
     crossover = []
+    sha_debug = []
 
     for i in range(-1, -8, -1):
         ha_range = abs(lt_sha["High"].iloc[i] - lt_sha["Low"].iloc[i])
@@ -345,7 +347,18 @@ def get_symbol_details(
             else:
                 crossover.append(-2)
 
-    return lt_symbol_power, lt_symbol_list, crossover
+        # ── diagnostic: capture SHA OHLC + timestamp for dashboard ────
+        ts = str(raw_df["Timestamp"].iloc[i]) if "Timestamp" in raw_df.columns else ""
+        sha_debug.append({
+            "ts": ts,
+            "O": round(float(lt_sha["Open"].iloc[i]), 2),
+            "H": round(float(lt_sha["High"].iloc[i]), 2),
+            "L": round(float(lt_sha["Low"].iloc[i]), 2),
+            "C": round(float(lt_sha["Close"].iloc[i]), 2),
+            "dir": "BULL" if lt_sha_diff == 1 else "BEAR",
+        })
+
+    return lt_symbol_power, lt_symbol_list, crossover, sha_debug
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -499,9 +512,9 @@ def inner_loop(
                 )
 
                 # ── Step B: SHA + signal details ──────────────────────────
-                ce_power, ce_list, ce_cross = get_symbol_details(ce_df)
-                pe_power, pe_list, pe_cross = get_symbol_details(pe_df)
-                idx_power, idx_list, idx_cross = get_symbol_details(idx_df)
+                ce_power, ce_list, ce_cross, ce_sha_dbg = get_symbol_details(ce_df)
+                pe_power, pe_list, pe_cross, pe_sha_dbg = get_symbol_details(pe_df)
+                idx_power, idx_list, idx_cross, idx_sha_dbg = get_symbol_details(idx_df)
 
                 power_list = [
                     (ce_power, ce_list, ce_cross),
@@ -524,6 +537,9 @@ def inner_loop(
                     idx_power=idx_power,
                     idx_list=idx_list,
                     idx_crossover=idx_cross,
+                    ce_sha_debug=ce_sha_dbg,
+                    pe_sha_debug=pe_sha_dbg,
+                    idx_sha_debug=idx_sha_dbg,
                 )
 
                 # ── Step C: Strategy evaluation ───────────────────────────
