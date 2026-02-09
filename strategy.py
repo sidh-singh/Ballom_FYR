@@ -205,160 +205,72 @@ class HeikenAshiMartingale:
         # ─────────────────────────────────────────────────────────────────────
         #  CE LOGIC — only when indices are BULLISH
         # ─────────────────────────────────────────────────────────────────────
-        if idx_list[0] == 1:
-            # ── close opposite-side PE if trend flipped to BULLISH ────────
-            if pe_qty > 0:
-                pe_action.status = Transaction.CLOSE_BUY
-                pe_action.qty = pe_qty
-                log_strategy_event(pe_symbol, "PE", "EXIT_TREND_FLIP",
-                                   qty=pe_qty, pl=pe_pl,
-                                   details=f"Trend → BULLISH, closing long PE (P&L {pe_pl:.2f})")
-            elif pe_qty < 0:
-                pe_action.status = Transaction.CLOSE_SELL
-                pe_action.qty = abs(pe_qty)
-                log_strategy_event(pe_symbol, "PE", "EXIT_TREND_FLIP",
-                                   qty=abs(pe_qty), pl=pe_pl,
-                                   details=f"Trend → BULLISH, closing short PE (P&L {pe_pl:.2f})")
 
-            if ce_qty == 0:
-                # ── entry ────────────────────────────────────────────────────
-                if ce_list[0] == 1 and ce_cross[0] == 3:
-                    ce_action.status = Transaction.BUY
-                    log_strategy_event(ce_symbol, "CE", "ENTRY_BUY",
-                                       qty=base_qty,
-                                       details="Strong bullish crossover (3)")
-                elif ce_list[0] == 0 and ce_cross[0] == -3:
-                    ce_action.status = Transaction.SELL
-                    log_strategy_event(ce_symbol, "CE", "ENTRY_SELL",
-                                       qty=base_qty,
-                                       details="Strong bearish crossover (-3)")
+        if ce_qty == 0 and pe_qty == 0:
+            # ── entry ────────────────────────────────────────────────────
+            
+            if (ce_list[0] == 1) and (idx_list[0] == 1) and (ce_cross[0] == 3):
+                ce_action.status = Transaction.BUY
+                log_strategy_event(ce_symbol, "CE", "ENTRY_BUY",
+                                    qty=base_qty,
+                                    details="Strong bullish crossover (3)")
+            elif (pe_list[0] == 1) and (idx_list[0] == 0) and (pe_cross[0] == 3):
+                pe_action.status = Transaction.BUY
+                log_strategy_event(pe_symbol, "PE", "ENTRY_BUY",
+                                    qty=base_qty,
+                                    details="Strong bullish crossover (3)")
 
-            elif ce_qty > 0:
-                # ── exit / martingale (long) ─────────────────────────────────
-                if ce_pl > self.HEDGE:
-                    ce_action.status = Transaction.CLOSE_BUY
-                    ce_action.qty = ce_qty
-                    log_strategy_event(ce_symbol, "CE", "EXIT_PROFIT",
-                                       qty=ce_qty, pl=ce_pl,
-                                       details=f"P&L {ce_pl:.2f} > target {self.HEDGE}")
-                elif ce_cross[0] in (0):
-                    ce_action.status = Transaction.CLOSE_BUY
-                    ce_action.qty = ce_qty
-                    log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
-                                       qty=ce_qty, pl=ce_pl,
-                                       details=f"Adverse crossover ({ce_cross[0]})")
-                elif ce_pl < -self._fibo_threshold(ce_count):
-                    thr = self._fibo_threshold(ce_count)
-                    mg_qty = self._fibo_next_qty(ce_qty, base_qty)
-                    ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
-                    ce_action.qty = ce_qty
-                    ce_action.martingale_qty = mg_qty
-                    log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY",
-                                       qty=mg_qty, pl=ce_pl,
-                                       details=f"P&L {ce_pl:.2f} < -{thr:.2f}")
-
-            elif ce_qty < 0:
-                # ── exit / martingale (short) ────────────────────────────────
-                if ce_pl > self.HEDGE:
-                    ce_action.status = Transaction.CLOSE_SELL
-                    ce_action.qty = abs(ce_qty)
-                    log_strategy_event(ce_symbol, "CE", "EXIT_SHORT_PROFIT",
-                                       qty=abs(ce_qty), pl=ce_pl,
-                                       details=f"Short P&L {ce_pl:.2f} > target {self.HEDGE}")
-                elif ce_cross[0] in (3, 2, 1):
-                    ce_action.status = Transaction.CLOSE_SELL
-                    ce_action.qty = abs(ce_qty)
-                    log_strategy_event(ce_symbol, "CE", "EXIT_SHORT_ADVERSE",
-                                       qty=abs(ce_qty), pl=ce_pl,
-                                       details=f"Bullish crossover ({ce_cross[0]}) against short")
-                elif ce_pl < -self._fibo_threshold(ce_count):
-                    thr = self._fibo_threshold(ce_count)
-                    mg_qty = self._fibo_next_qty(abs(ce_qty), base_qty)
-                    ce_action.status = Transaction.SELL_WITH_SPECIFIC_VOLUME
-                    ce_action.qty = abs(ce_qty)
-                    ce_action.martingale_qty = mg_qty
-                    log_strategy_event(ce_symbol, "CE", "MARTINGALE_SELL",
-                                       qty=mg_qty, pl=ce_pl,
-                                       details=f"P&L {ce_pl:.2f} < -{thr:.2f}")
+        elif ce_qty > 0:
+            # ── exit / martingale (long) ─────────────────────────────────
+            if ce_pl > self.HEDGE:
+                ce_action.status = Transaction.CLOSE_BUY
+                ce_action.qty = ce_qty
+                log_strategy_event(ce_symbol, "CE", "EXIT_PROFIT",
+                                    qty=ce_qty, pl=ce_pl,
+                                    details=f"P&L {ce_pl:.2f} > target {self.HEDGE}")
+            elif ce_cross[0] in (0):
+                ce_action.status = Transaction.CLOSE_BUY
+                ce_action.qty = ce_qty
+                log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
+                                    qty=ce_qty, pl=ce_pl,
+                                    details=f"Adverse crossover ({ce_cross[0]})")
+            elif ce_pl < -self._fibo_threshold(ce_count):
+                thr = self._fibo_threshold(ce_count)
+                mg_qty = self._fibo_next_qty(ce_qty, base_qty)
+                ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
+                ce_action.qty = ce_qty
+                ce_action.martingale_qty = mg_qty
+                log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY",
+                                    qty=mg_qty, pl=ce_pl,
+                                    details=f"P&L {ce_pl:.2f} < -{thr:.2f}")
 
         # ─────────────────────────────────────────────────────────────────────
         #  PE LOGIC — only when indices are BEARISH
         # ─────────────────────────────────────────────────────────────────────
-        elif idx_list[0] == 0:
-            # ── close opposite-side CE if trend flipped to BEARISH ────────
-            if ce_qty > 0:
-                ce_action.status = Transaction.CLOSE_BUY
-                ce_action.qty = ce_qty
-                log_strategy_event(ce_symbol, "CE", "EXIT_TREND_FLIP",
-                                   qty=ce_qty, pl=ce_pl,
-                                   details=f"Trend → BEARISH, closing long CE (P&L {ce_pl:.2f})")
-            elif ce_qty < 0:
-                ce_action.status = Transaction.CLOSE_SELL
-                ce_action.qty = abs(ce_qty)
-                log_strategy_event(ce_symbol, "CE", "EXIT_TREND_FLIP",
-                                   qty=abs(ce_qty), pl=ce_pl,
-                                   details=f"Trend → BEARISH, closing short CE (P&L {ce_pl:.2f})")
 
-            if pe_qty == 0:
-                # ── entry ────────────────────────────────────────────────────
-                if pe_list[0] == 1 and pe_cross[0] == 3:
-                    pe_action.status = Transaction.BUY
-                    log_strategy_event(pe_symbol, "PE", "ENTRY_BUY",
-                                       qty=base_qty,
-                                       details="Strong bullish crossover (3)")
-                elif pe_list[0] == 0 and pe_cross[0] == -3:
-                    pe_action.status = Transaction.SELL
-                    log_strategy_event(pe_symbol, "PE", "ENTRY_SELL",
-                                       qty=base_qty,
-                                       details="Strong bearish crossover (-3)")
-
-            elif pe_qty > 0:
-                # ── exit / martingale (long) ─────────────────────────────────
-                if pe_pl > self.HEDGE:
-                    pe_action.status = Transaction.CLOSE_BUY
-                    pe_action.qty = pe_qty
-                    log_strategy_event(pe_symbol, "PE", "EXIT_PROFIT",
-                                       qty=pe_qty, pl=pe_pl,
-                                       details=f"P&L {pe_pl:.2f} > target {self.HEDGE}")
-                elif pe_cross[0] in (0):
-                    pe_action.status = Transaction.CLOSE_BUY
-                    pe_action.qty = pe_qty
-                    log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
-                                       qty=pe_qty, pl=pe_pl,
-                                       details=f"Adverse crossover ({pe_cross[0]})")
-                elif pe_pl < -self._fibo_threshold(pe_count):
-                    thr = self._fibo_threshold(pe_count)
-                    mg_qty = self._fibo_next_qty(pe_qty, base_qty)
-                    pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
-                    pe_action.qty = pe_qty
-                    pe_action.martingale_qty = mg_qty
-                    log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY",
-                                       qty=mg_qty, pl=pe_pl,
-                                       details=f"P&L {pe_pl:.2f} < -{thr:.2f}")
-
-            elif pe_qty < 0:
-                # ── exit / martingale (short) ────────────────────────────────
-                if pe_pl > self.HEDGE:
-                    pe_action.status = Transaction.CLOSE_SELL
-                    pe_action.qty = abs(pe_qty)
-                    log_strategy_event(pe_symbol, "PE", "EXIT_SHORT_PROFIT",
-                                       qty=abs(pe_qty), pl=pe_pl,
-                                       details=f"Short P&L {pe_pl:.2f} > target {self.HEDGE}")
-                elif pe_cross[0] in (3, 2, 1):
-                    pe_action.status = Transaction.CLOSE_SELL
-                    pe_action.qty = abs(pe_qty)
-                    log_strategy_event(pe_symbol, "PE", "EXIT_SHORT_ADVERSE",
-                                       qty=abs(pe_qty), pl=pe_pl,
-                                       details=f"Bullish crossover ({pe_cross[0]}) against short")
-                elif pe_pl < -self._fibo_threshold(pe_count):
-                    thr = self._fibo_threshold(pe_count)
-                    mg_qty = self._fibo_next_qty(abs(pe_qty), base_qty)
-                    pe_action.status = Transaction.SELL_WITH_SPECIFIC_VOLUME
-                    pe_action.qty = abs(pe_qty)
-                    pe_action.martingale_qty = mg_qty
-                    log_strategy_event(pe_symbol, "PE", "MARTINGALE_SELL",
-                                       qty=mg_qty, pl=pe_pl,
-                                       details=f"P&L {pe_pl:.2f} < -{thr:.2f}")
+        elif pe_qty > 0:
+            # ── exit / martingale (long) ─────────────────────────────────
+            if pe_pl > self.HEDGE:
+                pe_action.status = Transaction.CLOSE_BUY
+                pe_action.qty = pe_qty
+                log_strategy_event(pe_symbol, "PE", "EXIT_PROFIT",
+                                    qty=pe_qty, pl=pe_pl,
+                                    details=f"P&L {pe_pl:.2f} > target {self.HEDGE}")
+            elif pe_cross[0] in (0):
+                pe_action.status = Transaction.CLOSE_BUY
+                pe_action.qty = pe_qty
+                log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
+                                    qty=pe_qty, pl=pe_pl,
+                                    details=f"Adverse crossover ({pe_cross[0]})")
+            elif pe_pl < -self._fibo_threshold(pe_count):
+                thr = self._fibo_threshold(pe_count)
+                mg_qty = self._fibo_next_qty(pe_qty, base_qty)
+                pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
+                pe_action.qty = pe_qty
+                pe_action.martingale_qty = mg_qty
+                log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY",
+                                    qty=mg_qty, pl=pe_pl,
+                                    details=f"P&L {pe_pl:.2f} < -{thr:.2f}")
 
         return ce_action, pe_action
 
