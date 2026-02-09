@@ -206,6 +206,20 @@ class HeikenAshiMartingale:
         #  CE LOGIC — only when indices are BULLISH
         # ─────────────────────────────────────────────────────────────────────
         if idx_list[0] == 1:
+            # ── close opposite-side PE if trend flipped to BULLISH ────────
+            if pe_qty > 0:
+                pe_action.status = Transaction.CLOSE_BUY
+                pe_action.qty = pe_qty
+                log_strategy_event(pe_symbol, "PE", "EXIT_TREND_FLIP",
+                                   qty=pe_qty, pl=pe_pl,
+                                   details=f"Trend → BULLISH, closing long PE (P&L {pe_pl:.2f})")
+            elif pe_qty < 0:
+                pe_action.status = Transaction.CLOSE_SELL
+                pe_action.qty = abs(pe_qty)
+                log_strategy_event(pe_symbol, "PE", "EXIT_TREND_FLIP",
+                                   qty=abs(pe_qty), pl=pe_pl,
+                                   details=f"Trend → BULLISH, closing short PE (P&L {pe_pl:.2f})")
+
             if ce_qty == 0:
                 # ── entry ────────────────────────────────────────────────────
                 if ce_list[0] == 1 and ce_cross[0] == 3:
@@ -271,6 +285,20 @@ class HeikenAshiMartingale:
         #  PE LOGIC — only when indices are BEARISH
         # ─────────────────────────────────────────────────────────────────────
         elif idx_list[0] == 0:
+            # ── close opposite-side CE if trend flipped to BEARISH ────────
+            if ce_qty > 0:
+                ce_action.status = Transaction.CLOSE_BUY
+                ce_action.qty = ce_qty
+                log_strategy_event(ce_symbol, "CE", "EXIT_TREND_FLIP",
+                                   qty=ce_qty, pl=ce_pl,
+                                   details=f"Trend → BEARISH, closing long CE (P&L {ce_pl:.2f})")
+            elif ce_qty < 0:
+                ce_action.status = Transaction.CLOSE_SELL
+                ce_action.qty = abs(ce_qty)
+                log_strategy_event(ce_symbol, "CE", "EXIT_TREND_FLIP",
+                                   qty=abs(ce_qty), pl=ce_pl,
+                                   details=f"Trend → BEARISH, closing short CE (P&L {ce_pl:.2f})")
+
             if pe_qty == 0:
                 # ── entry ────────────────────────────────────────────────────
                 if pe_list[0] == 1 and pe_cross[0] == 3:
@@ -404,15 +432,24 @@ class HeikenAshiMartingale:
         """
         Place orders for CE and PE legs based on the evaluated actions.
 
-        In demo mode, DemoFyers handles paper trading internally —
-        orders are sent to fyers.buy()/sell() regardless of mode.
-
-        Balance-limit checks block new entries when utilized margin
-        exceeds max_balance_usage.  Fibonacci qty escalation is
-        already computed in evaluate() and stored in martingale_qty.
+        EXIT orders (CLOSE_BUY / CLOSE_SELL) are always executed FIRST
+        so that opposite-side positions are closed before new entries
+        are opened.  This prevents holding both CE and PE simultaneously
+        after a trend flip.
         """
-        self._execute_single(fyers, ce_action, "CE")
-        self._execute_single(fyers, pe_action, "PE")
+        exit_types = (Transaction.CLOSE_BUY, Transaction.CLOSE_SELL)
+
+        # ── Phase 1: execute all exits first ──────────────────────────────
+        if ce_action.status in exit_types:
+            self._execute_single(fyers, ce_action, "CE")
+        if pe_action.status in exit_types:
+            self._execute_single(fyers, pe_action, "PE")
+
+        # ── Phase 2: execute entries / martingale / other ─────────────────
+        if ce_action.status not in exit_types:
+            self._execute_single(fyers, ce_action, "CE")
+        if pe_action.status not in exit_types:
+            self._execute_single(fyers, pe_action, "PE")
 
     def _execute_single(self, fyers, action: OrderAction, label: str) -> None:
         """Execute a single leg's order action with balance-limit enforcement."""
