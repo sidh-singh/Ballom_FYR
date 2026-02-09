@@ -30,20 +30,44 @@ class SmoothedHeikenAshi:
             weights = np.arange(1, length + 1)
             return series.rolling(length).apply(lambda x: np.dot(x, weights) / weights.sum(), raw=True)
         elif ma_type == 'RMA':
-            # Match TradingView: seed with SMA of first `length` bars,
-            # then apply alpha = 1/length exponential smoothing.
+            # ── Match TradingView ta.rma() exactly ──────────────────────
+            # TV behaviour:
+            #   bars 0 .. length-2  → NaN
+            #   bar  length-1       → SMA(source, length)  (seed)
+            #   bar  length ..      → alpha*src + (1-alpha)*prev
+            # When input already contains leading NaNs (e.g. post-smooth
+            # pass on HA values), we find the first window of `length`
+            # consecutive non-NaN values to place the SMA seed.
             alpha = 1 / length
             values = series.values.astype(float)
             n = len(values)
-            if n < length:
-                return series.ewm(alpha=alpha, adjust=False).mean()
-            out = np.empty(n, dtype=float)
-            # Expanding mean for first `length` bars; at index length-1 this equals SMA(length)
-            cumsum = np.cumsum(values[:length])
-            out[:length] = cumsum / np.arange(1, length + 1)
-            # True RMA from bar `length` onward
-            for i in range(length, n):
-                out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
+            out = np.full(n, np.nan)
+
+            # Find first window of `length` consecutive non-NaN values
+            consec = 0
+            seed_idx = -1
+            for i in range(n):
+                if np.isnan(values[i]):
+                    consec = 0
+                else:
+                    consec += 1
+                    if consec == length:
+                        seed_idx = i
+                        break
+
+            if seed_idx < 0:
+                return pd.Series(out, index=series.index)
+
+            # SMA seed
+            out[seed_idx] = np.mean(values[seed_idx - length + 1 : seed_idx + 1])
+
+            # Recursive from seed_idx + 1
+            for i in range(seed_idx + 1, n):
+                if np.isnan(values[i]):
+                    out[i] = np.nan
+                else:
+                    out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
+
             return pd.Series(out, index=series.index)
         elif ma_type == 'VWMA':
             if volume is None:
@@ -74,18 +98,8 @@ class SmoothedHeikenAshi:
             weights = np.array(weights) / np.sum(weights)
             return series.rolling(length).apply(lambda x: np.dot(x, weights), raw=True)
         elif ma_type in ('SMMA', 'SWMA'):
-            # SMMA is equivalent to RMA — use same SMA-seeded initialization
-            alpha = 1.0 / length
-            values = series.values.astype(float)
-            n = len(values)
-            if n < length:
-                return series.ewm(alpha=alpha, adjust=False).mean()
-            out = np.empty(n, dtype=float)
-            cumsum = np.cumsum(values[:length])
-            out[:length] = cumsum / np.arange(1, length + 1)
-            for i in range(length, n):
-                out[i] = alpha * values[i] + (1 - alpha) * out[i - 1]
-            return pd.Series(out, index=series.index)
+            # SMMA is equivalent to RMA — delegate
+            return SmoothedHeikenAshi.ma(series, length, 'RMA', volume)
         elif ma_type == 'LSMA':
             return series.rolling(length).apply(
                 lambda x: np.polyfit(range(length), x, 1)[0] * (length - 1) + np.polyfit(range(length), x, 1)[1],
@@ -126,12 +140,29 @@ class SmoothedHeikenAshi:
         c = SmoothedHeikenAshi.ma(df['Close'], smooth_length, smooth_ma_type, df['Volume'])
 
         # Step 2: Heiken Ashi Calculation (recursive)
+        # ha_close is NaN wherever any of o/h/l/c is NaN
         ha_close = (o + h + l + c) / 4
-        ha_open = pd.Series(index=df.index, dtype=float)
-        ha_open.iloc[0] = (o.iloc[0] + c.iloc[0]) / 2
+        ha_open = pd.Series(np.nan, index=df.index)
 
-        for i in range(1, len(df)):
-            ha_open.iloc[i] = (ha_open.iloc[i - 1] + ha_close.iloc[i - 1]) / 2
+        # TradingView: `var float haopen = na`
+        # haopen := na(haopen[1]) ? (o + c) / 2 : (haopen[1] + haclose[1]) / 2
+        # → ha_open is NaN until the first bar where ha_close is valid,
+        #   then seeded with (o + c) / 2 and recursive from there.
+        ha_close_vals = ha_close.values
+        first_valid_pos = -1
+        for i in range(len(ha_close_vals)):
+            if not np.isnan(ha_close_vals[i]):
+                first_valid_pos = i
+                break
+
+        if first_valid_pos >= 0:
+            ha_open.iloc[first_valid_pos] = (
+                o.iloc[first_valid_pos] + c.iloc[first_valid_pos]
+            ) / 2
+            for i in range(first_valid_pos + 1, len(df)):
+                ha_open.iloc[i] = (
+                    ha_open.iloc[i - 1] + ha_close.iloc[i - 1]
+                ) / 2
 
         ha_high = pd.concat([h, ha_open, ha_close], axis=1).max(axis=1)
         ha_low = pd.concat([l, ha_open, ha_close], axis=1).min(axis=1)
