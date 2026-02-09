@@ -487,9 +487,9 @@ class DemoFyers(Fyers):
             pos.ltp = ltp
 
             if pos.side == 1:
-                unrealized = (ltp - pos.avg_price) * pos.qty
+                unrealized = round((ltp - pos.avg_price) * pos.qty, 2)
             else:
-                unrealized = (pos.avg_price - ltp) * pos.qty
+                unrealized = round((pos.avg_price - ltp) * pos.qty, 2)
             pos.unrealized_pl = unrealized
             total_unrealized += unrealized
 
@@ -502,25 +502,25 @@ class DemoFyers(Fyers):
             rows.append({
                 "symbol": pos.symbol,
                 "id": pos.position_id,
-                "buyAvg": pos.avg_price if pos.side == 1 else 0,
+                "buyAvg": round(pos.avg_price, 2) if pos.side == 1 else 0,
                 "buyQty": pos.qty if pos.side == 1 else 0,
-                "sellAvg": pos.avg_price if pos.side == -1 else 0,
+                "sellAvg": round(pos.avg_price, 2) if pos.side == -1 else 0,
                 "sellQty": pos.qty if pos.side == -1 else 0,
-                "netAvg": pos.avg_price,
+                "netAvg": round(pos.avg_price, 2),
                 "netQty": pos.qty * pos.side,
                 "side": pos.side,
                 "qty": pos.qty,
                 "productType": pos.product_type,
-                "realized_profit": _cum_realized,
-                "pl": _cum_realized + unrealized,
+                "realized_profit": round(_cum_realized, 2),
+                "pl": round(_cum_realized + unrealized, 2),
                 "crossCurrency": "N",
                 "rbiRefRate": 0,
                 "qtyMulti_com": 1,
                 "segment": 11,
                 "exchange": "NSE",
-                "unrealized_profit": unrealized,
+                "unrealized_profit": round(unrealized, 2),
                 "slNo": 1,
-                "ltp": ltp,
+                "ltp": round(ltp, 2),
                 "fytoken": "",
                 "cfBuyQty": 0,
                 "cfSellQty": 0,
@@ -533,9 +533,9 @@ class DemoFyers(Fyers):
         overall = OverallPosition(
             count_total=len(self.demo_positions),
             count_open=len(self.demo_positions),
-            pl_total=self.account.realized_pnl + total_unrealized,
-            pl_realized=self.account.realized_pnl,
-            pl_unrealized=total_unrealized,
+            pl_total=round(self.account.realized_pnl + total_unrealized, 2),
+            pl_realized=round(self.account.realized_pnl, 2),
+            pl_unrealized=round(total_unrealized, 2),
         )
         return df, overall
 
@@ -548,24 +548,25 @@ class DemoFyers(Fyers):
                 total_unrealized += (ltp - pos.avg_price) * pos.qty
             else:
                 total_unrealized += (pos.avg_price - ltp) * pos.qty
+        total_unrealized = round(total_unrealized, 2)
         self.account.unrealized_pnl = total_unrealized
 
         return {
             "s": "ok",
             "fund_limit": [
                 {"id": 1, "title": "Total Balance",
-                 "equityAmount": self.account.current_balance, "commodityAmount": 0},
+                 "equityAmount": round(self.account.current_balance, 2), "commodityAmount": 0},
                 {"id": 2, "title": "Utilized Amount",
-                 "equityAmount": self.account.utilized_margin, "commodityAmount": 0},
+                 "equityAmount": round(self.account.utilized_margin, 2), "commodityAmount": 0},
                 {"id": 3, "title": "Available Balance",
-                 "equityAmount": self.account.current_balance - self.account.utilized_margin,
+                 "equityAmount": round(self.account.current_balance - self.account.utilized_margin, 2),
                  "commodityAmount": 0},
                 {"id": 4, "title": "Realized P&L",
-                 "equityAmount": self.account.realized_pnl, "commodityAmount": 0},
+                 "equityAmount": round(self.account.realized_pnl, 2), "commodityAmount": 0},
                 {"id": 5, "title": "Unrealized P&L",
-                 "equityAmount": total_unrealized, "commodityAmount": 0},
+                 "equityAmount": round(total_unrealized, 2), "commodityAmount": 0},
                 {"id": 6, "title": "Initial Balance",
-                 "equityAmount": self.account.initial_balance, "commodityAmount": 0},
+                 "equityAmount": round(self.account.initial_balance, 2), "commodityAmount": 0},
             ],
         }
 

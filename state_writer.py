@@ -192,16 +192,16 @@ def write_account_state(
 ) -> None:
     _write_json_atomic(ACCOUNT_STATE_FILE, {
         "timestamp": _ts(),
-        "balance": balance,
-        "utilized": utilized,
-        "available": balance - utilized,
-        "realized_pnl": realized_pnl,
-        "unrealized_pnl": unrealized_pnl,
-        "total_pnl": realized_pnl + unrealized_pnl,
+        "balance": round(balance, 2),
+        "utilized": round(utilized, 2),
+        "available": round(balance - utilized, 2),
+        "realized_pnl": round(realized_pnl, 2),
+        "unrealized_pnl": round(unrealized_pnl, 2),
+        "total_pnl": round(realized_pnl + unrealized_pnl, 2),
         "total_trades": total_trades,
         "winning_trades": winning_trades,
         "losing_trades": losing_trades,
-        "win_rate": (winning_trades / max(total_trades, 1)) * 100,
+        "win_rate": round((winning_trades / max(total_trades, 1)) * 100, 2),
     })
 
 

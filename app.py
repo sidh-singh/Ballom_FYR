@@ -119,8 +119,18 @@ def _load_json(path: Path) -> dict:
 def _dump_positions_and_account(fyers: Fyers) -> None:
     """Snapshot current positions + account state to JSON."""
     pos_df, overall = fyers.position()
+
+    # Round all float columns in position DataFrame to 2 decimal places
+    if not pos_df.empty:
+        float_cols = pos_df.select_dtypes(include=["float", "float64"]).columns
+        pos_df[float_cols] = pos_df[float_cols].round(2)
+
     rows = pos_df.to_dict(orient="records") if not pos_df.empty else []
-    write_position_state(rows, asdict(overall))
+    overall_dict = asdict(overall)
+    for k, v in overall_dict.items():
+        if isinstance(v, float):
+            overall_dict[k] = round(v, 2)
+    write_position_state(rows, overall_dict)
 
     funds = fyers.funds()
     fund_map = {}
@@ -128,10 +138,10 @@ def _dump_positions_and_account(fyers: Fyers) -> None:
         fund_map[item.get("title", "")] = item.get("equityAmount", 0)
 
     write_account_state(
-        balance=fund_map.get("Total Balance", 0),
-        utilized=fund_map.get("Utilized Amount", 0),
-        realized_pnl=fund_map.get("Realized P&L", overall.pl_realized),
-        unrealized_pnl=overall.pl_unrealized,
+        balance=round(fund_map.get("Total Balance", 0), 2),
+        utilized=round(fund_map.get("Utilized Amount", 0), 2),
+        realized_pnl=round(fund_map.get("Realized P&L", overall.pl_realized), 2),
+        unrealized_pnl=round(overall.pl_unrealized, 2),
         total_trades=getattr(fyers, "account", None) and fyers.account.total_trades or 0,
         winning_trades=getattr(fyers, "account", None) and fyers.account.winning_trades or 0,
         losing_trades=getattr(fyers, "account", None) and fyers.account.losing_trades or 0,
