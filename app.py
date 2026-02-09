@@ -383,6 +383,13 @@ def inner_loop(
                                details="Incomplete pair — skipping")
             continue
 
+        # ── Skip if pair doesn't match current market_type ────────────────
+        pair_type = "INDEX" if info.get("indices") else "COMMODITY"
+        if pair_type != market_type:
+            log_strategy_event(symbol_key, "INNER", "SKIP",
+                               details=f"Wrong market type (expected {market_type}, got {pair_type})")
+            continue
+
         write_app_status(mode, str(current_day), status="trading",
                          message=f"Trading {symbol_key} | CE={ce_symbol} PE={pe_symbol}")
 
@@ -587,8 +594,9 @@ def main():
             status="running",
         )
 
-        # ── Step 3a: INDICES window (first preference) ─────────────────────
+        # ── Step 3a: INDICES window (FIRST PRIORITY — ALWAYS) ─────────────
         if in_indices_window:
+            # During indices hours, ONLY process indices — never commodities
             if has_comm_pos:
                 write_app_status(mode, str(current_day), status="blocked",
                                  message="Commodity positions open — skipping indices")
@@ -610,8 +618,9 @@ def main():
                     tracker=tracker,
                 )
 
-        # ── Step 3b: COMMODITY window (only outside indices hours) ─────────
-        elif in_commodity_window and now > INDICES_END:
+        # ── Step 3b: COMMODITY window (ONLY after indices close — NEVER during indices hours) ─────────
+        elif in_commodity_window and not in_indices_window:
+            # Commodities can ONLY trade when indices window is completely closed
             if has_idx_pos:
                 write_app_status(mode, str(current_day), status="blocked",
                                  message="Index positions open — skipping commodities")
@@ -632,6 +641,10 @@ def main():
                     mode=mode,
                     tracker=tracker,
                 )
+        else:
+            # Outside all trading windows
+            write_app_status(mode, str(current_day), status="idle",
+                             message=f"Outside trading hours ({now.strftime('%H:%M')})")
 
         sleep(1)
 
