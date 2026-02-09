@@ -65,7 +65,7 @@ INNER_LOOP_INTERVAL = 1   # seconds between each strategy evaluation cycle
 #  STRATEGY TUNING PARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-STRATEGY_HEDGE          = 500      # Profit target (₹) for closing positions
+STRATEGY_HEDGE          = 100      # Profit target (₹) for closing positions
 STRATEGY_FACTOR         = 1.6      # Exponent for fibonacci loss threshold
 STRATEGY_TIMES          = 1        # Base multiplier for fibonacci sizing
 STRATEGY_PRODUCT_TYPE   = "MARGIN"
