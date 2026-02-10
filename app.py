@@ -591,6 +591,10 @@ def inner_loop(
                          message=f"Trading {symbol_key} | CE={ce_symbol} PE={pe_symbol}")
 
         snapshot_counter = 0
+        # Track if a position was ever opened on this pair.
+        # Pre-check: if pair already has open positions (overnight carry),
+        # mark as True so we break correctly when they close.
+        had_positions_ever = _has_open_positions(fyers, ce_symbol, pe_symbol)
 
         # ── trading loop for this symbol pair ──────────────────────────────
         while True:
@@ -608,6 +612,11 @@ def inner_loop(
             # ── Check trading window ──────────────────────────────────────
             if not _is_in_trading_window(market_type):
                 if not _has_open_positions(fyers, ce_symbol, pe_symbol):
+                    # Outside window, no positions → clear pair if it was traded
+                    if had_positions_ever and pair_manager:
+                        pair_manager.clear_pair(symbol_key)
+                        log_strategy_event(symbol_key, "PAIR_MGR", "PAIR_CLEARED_WINDOW_END",
+                                           details=f"CE={ce_symbol} PE={pe_symbol} — outside window, no positions")
                     write_app_status(mode, str(current_day), status="idle",
                                      message=f"{symbol_key}: outside window & no positions")
                     break
@@ -692,22 +701,47 @@ def inner_loop(
                                 _act.symbol, _act.pl,
                                 _act.api_total_pl, abs(_act.position_qty))
 
-                # ── Step E: Check if all positions are closed ─────────────
+                # ── Step E: Position lifecycle tracking ────────────────────
+                #
+                # Track whether a position was ever opened on this pair.
+                # Once opened and then fully closed → break out to outer
+                # loop so PairManager can pick fresh CE/PE strikes.
+                #
+                # Pending-close confirmation: strategy.evaluate() already
+                # handles confirming closes (calls confirm_close when
+                # netQty=0 for a pending symbol). But we also check here
+                # for the break condition.
+                # ──────────────────────────────────────────────────────────
+
+                has_pos_now = _has_open_positions(fyers, ce_symbol, pe_symbol)
+
+                if has_pos_now:
+                    had_positions_ever = True
+
                 if ce_action.is_actionable or pe_action.is_actionable:
                     sleep(2)
+                    # Re-check after sleep (order may have settled)
+                    has_pos_now = _has_open_positions(fyers, ce_symbol, pe_symbol)
+                    if has_pos_now:
+                        had_positions_ever = True
 
-                if not _has_open_positions(fyers, ce_symbol, pe_symbol):
-                    if not ce_action.is_actionable and not pe_action.is_actionable:
-                        pass  # no signal yet — keep waiting
-                    else:
-                        # All positions for this pair are closed → clear pair lock
-                        if pair_manager:
-                            pair_manager.clear_pair(symbol_key)
-                            log_strategy_event(symbol_key, "PAIR_MGR", "PAIR_CLEARED_AFTER_CLOSE",
-                                               details=f"CE={ce_symbol} PE={pe_symbol} — lock released")
-                        log_strategy_event(symbol_key, "INNER", "ALL_CLOSED",
-                                           details="All positions closed — returning to outer loop")
-                        break
+                # Confirm any pending closes that have now filled
+                if not has_pos_now:
+                    if strategy.is_pending_close(ce_symbol):
+                        strategy.confirm_close(ce_symbol)
+                    if strategy.is_pending_close(pe_symbol):
+                        strategy.confirm_close(pe_symbol)
+
+                if not has_pos_now and had_positions_ever:
+                    # Position was opened and is now fully closed → done
+                    if pair_manager:
+                        pair_manager.clear_pair(symbol_key)
+                        log_strategy_event(symbol_key, "PAIR_MGR", "PAIR_CLEARED_AFTER_CLOSE",
+                                           details=f"CE={ce_symbol} PE={pe_symbol} — lock released")
+                    log_strategy_event(symbol_key, "INNER", "ALL_CLOSED",
+                                       details="Position cycle complete — returning to outer loop for fresh pair")
+                    break
+                # else: no position ever opened yet — keep waiting for entry signal
 
             except Exception as e:
                 log_strategy_event(symbol_key, "INNER", "ERROR", details=str(e))

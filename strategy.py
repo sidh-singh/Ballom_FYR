@@ -75,6 +75,40 @@ class HeikenAshiMartingale:
         self.brake = brake
         self.max_balance_usage = max_balance_usage
         self.tracker = tracker
+        # Track symbols with pending close orders (order sent but not yet
+        # confirmed filled).  On live Fyers, place_order() returns before
+        # the order fills.  We must NOT update the tracker's booked_profit
+        # until the position actually reaches netQty=0.
+        self._pending_close: dict[str, dict] = {}  # symbol → {qty, pl, api_total_pl}
+
+    # ── pending-close helpers ──────────────────────────────────────────────
+
+    def mark_pending_close(self, symbol: str, qty: int, pl: float, api_total_pl: float) -> None:
+        """Mark a symbol as having a pending close order."""
+        self._pending_close[symbol] = {
+            "qty": qty, "pl": pl, "api_total_pl": api_total_pl,
+        }
+
+    def is_pending_close(self, symbol: str) -> bool:
+        """True if a close order was sent but position hasn't zeroed out yet."""
+        return symbol in self._pending_close
+
+    def confirm_close(self, symbol: str) -> None:
+        """
+        Called when position for *symbol* has confirmed netQty=0.
+        NOW update the tracker's booked_profit.
+        """
+        info = self._pending_close.pop(symbol, None)
+        if info and self.tracker:
+            self.tracker.record_close(
+                symbol, info["api_total_pl"], info["qty"], info["pl"])
+            log_strategy_event(symbol, "CLOSE", "CLOSE_CONFIRMED",
+                               qty=info["qty"], pl=info["pl"],
+                               details=f"Position confirmed closed — tracker updated")
+
+    def cancel_pending_close(self, symbol: str) -> None:
+        """Cancel a pending close (order rejected or timed out)."""
+        self._pending_close.pop(symbol, None)
 
     # ── fibonacci helpers ──────────────────────────────────────────────────────
 
@@ -200,8 +234,48 @@ class HeikenAshiMartingale:
             ce_symbol.split(":")[1] if ":" in ce_symbol else ce_symbol,
             "EVAL", "ANALYSIS",
             details=f"Idx={idx_trend} CE_cross={ce_cross[0]} PE_cross={pe_cross[0]} "
-                    f"CE_pwr={ce_power}/7 PE_pwr={pe_power}/7",
+                    f"CE_pwr={ce_power}/7 PE_pwr={pe_power}/7"
+                    f" | pending_close: CE={self.is_pending_close(ce_symbol)} PE={self.is_pending_close(pe_symbol)}",
         )
+
+        # ─────────────────────────────────────────────────────────────────────
+        #  PENDING-CLOSE HANDLING (live market: order sent, awaiting fill)
+        #
+        #  If a close was sent last cycle but position still has qty > 0,
+        #  re-issue the CLOSE.  If qty has reached 0, confirm the close
+        #  so the tracker's booked_profit gets updated NOW (not before).
+        # ─────────────────────────────────────────────────────────────────────
+
+        if self.is_pending_close(ce_symbol):
+            if ce_qty == 0:
+                # Close order filled — confirm and update tracker
+                self.confirm_close(ce_symbol)
+            else:
+                # Still open — re-issue close
+                ce_action.status = Transaction.CLOSE_BUY
+                ce_action.qty = ce_qty
+                log_strategy_event(ce_symbol, "CE", "RETRY_CLOSE",
+                                    qty=ce_qty, pl=ce_pl,
+                                    details=f"Pending close not yet filled — retrying")
+                # Also handle PE pending in parallel
+                if self.is_pending_close(pe_symbol):
+                    if pe_qty == 0:
+                        self.confirm_close(pe_symbol)
+                    else:
+                        pe_action.status = Transaction.CLOSE_BUY
+                        pe_action.qty = pe_qty
+                return ce_action, pe_action
+
+        if self.is_pending_close(pe_symbol):
+            if pe_qty == 0:
+                self.confirm_close(pe_symbol)
+            else:
+                pe_action.status = Transaction.CLOSE_BUY
+                pe_action.qty = pe_qty
+                log_strategy_event(pe_symbol, "PE", "RETRY_CLOSE",
+                                    qty=pe_qty, pl=pe_pl,
+                                    details=f"Pending close not yet filled — retrying")
+                return ce_action, pe_action
 
         # ─────────────────────────────────────────────────────────────────────
         #  CE LOGIC — only when indices are BULLISH
@@ -426,20 +500,36 @@ class HeikenAshiMartingale:
         # ── CLOSE_BUY (exit long → sell existing qty) ─────────────────────
         elif s == Transaction.CLOSE_BUY:
             resp = fyers.sell(sym, action.qty)
-            if self.tracker:
-                self.tracker.record_close(
-                    sym, action.api_total_pl, action.qty, action.pl)
-            log_strategy_event(sym, label, "CLOSE_BUY_EXECUTED",
-                               qty=action.qty, pl=action.pl, details=str(resp))
+            order_ok = isinstance(resp, dict) and resp.get("s") == "ok"
+            if order_ok:
+                # Order accepted — mark as pending close.
+                # Tracker update is DEFERRED until position confirms netQty=0
+                # (handled in evaluate() next cycle via confirm_close).
+                self.mark_pending_close(
+                    sym, action.qty, action.pl, action.api_total_pl)
+                log_strategy_event(sym, label, "CLOSE_BUY_SENT",
+                                   qty=action.qty, pl=action.pl,
+                                   details=f"Order accepted — pending fill | {str(resp)}")
+            else:
+                # Order rejected — do NOT update tracker, will retry next cycle
+                log_strategy_event(sym, label, "CLOSE_BUY_REJECTED",
+                                   qty=action.qty, pl=action.pl,
+                                   details=f"Order REJECTED — will retry | {str(resp)}")
 
         # ── CLOSE_SELL (exit short → buy back existing qty) ────────────────
         elif s == Transaction.CLOSE_SELL:
             resp = fyers.buy(sym, action.qty)
-            if self.tracker:
-                self.tracker.record_close(
-                    sym, action.api_total_pl, action.qty, action.pl)
-            log_strategy_event(sym, label, "CLOSE_SELL_EXECUTED",
-                               qty=action.qty, pl=action.pl, details=str(resp))
+            order_ok = isinstance(resp, dict) and resp.get("s") == "ok"
+            if order_ok:
+                self.mark_pending_close(
+                    sym, action.qty, action.pl, action.api_total_pl)
+                log_strategy_event(sym, label, "CLOSE_SELL_SENT",
+                                   qty=action.qty, pl=action.pl,
+                                   details=f"Order accepted — pending fill | {str(resp)}")
+            else:
+                log_strategy_event(sym, label, "CLOSE_SELL_REJECTED",
+                                   qty=action.qty, pl=action.pl,
+                                   details=f"Order REJECTED — will retry | {str(resp)}")
 
         # ── BUY_WITH_SPECIFIC_VOLUME (martingale add long) ────────────────
         #    qty increases along the fibonacci series (computed by evaluate)

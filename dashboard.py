@@ -388,7 +388,16 @@ def _action_badge(action: str) -> html.Span:
         bg, fg, glow = "#9b59b6", "#f0e6f6", "rgba(155, 89, 182, 0.3)"
         icon = "\u26a1"
     elif "EXIT" in act_upper or "CLOSE" in act_upper or "ALL_CLOSED" in act_upper:
-        if "PROFIT" in act_upper:
+        if "REJECTED" in act_upper:
+            bg, fg, glow = "#c0392b", "#f0e6e6", "rgba(192, 57, 43, 0.3)"
+            icon = "\U0001f6a8"
+        elif "CONFIRMED" in act_upper:
+            bg, fg, glow = "#27ae60", "#e6f0ea", "rgba(39, 174, 96, 0.3)"
+            icon = "\u2705"
+        elif "SENT" in act_upper or "RETRY" in act_upper:
+            bg, fg, glow = "#f39c12", "#3a2e12", "rgba(243, 156, 18, 0.3)"
+            icon = "\u23f3"
+        elif "PROFIT" in act_upper:
             bg, fg, glow = "#00d2a0", "#0d2f25", COLORS["positive_glow"]
             icon = "\U0001f4b0"
         elif "ADVERSE" in act_upper:
