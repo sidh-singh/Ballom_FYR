@@ -52,6 +52,8 @@ from constants import (
     DEFAULT_TIMEFRAME,
     DEFAULT_CANDLES,
     INNER_LOOP_INTERVAL,
+    STRATEGY_HEDGE_INDEX,
+    STRATEGY_HEDGE_COMMODITY,
 )
 from state_writer import (
     configure as configure_state_writer,
@@ -174,10 +176,11 @@ def scan_and_dump_index_pairs(
         symbol_key = entry["symbol"]
         underlying = entry["indices"]
         qty_times  = entry.get("qty_times", 1)
+        hedge      = entry.get("hedge", STRATEGY_HEDGE_INDEX)
 
         # ── PairManager resolution (locked pair / overnight / fresh scan) ─
         if pair_manager:
-            def _scan_index(sym_key=symbol_key, und=underlying, qt=qty_times):
+            def _scan_index(sym_key=symbol_key, und=underlying, qt=qty_times, hdg=hedge):
                 """Fresh-scan closure for this index."""
                 pair = fyers.fetch_option_pair(und, asset_type="INDEX")
                 debug_trail = pair.get("Debug", "")
@@ -206,6 +209,7 @@ def scan_and_dump_index_pairs(
                     "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
                     "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
                     "VIX": pair["VIX"], "indices": und, "qty": qty,
+                    "hedge": hdg,
                 }
 
             resolved = pair_manager.resolve_pair(fyers, symbol_key, _scan_index)
@@ -251,6 +255,7 @@ def scan_and_dump_index_pairs(
             "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
             "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
             "VIX": pair["VIX"], "indices": underlying, "qty": qty,
+            "hedge": hedge,
         }
         log_strategy_event(
             symbol_key, "SCAN", "INDEX_PAIR_FOUND", qty=qty,
@@ -287,10 +292,11 @@ def scan_and_dump_commodity_pairs(
         symbol_key = entry["symbol"]
         generic    = entry["commodity"]
         qty_times  = entry.get("qty_times", 1)
+        hedge      = entry.get("hedge", STRATEGY_HEDGE_COMMODITY)
 
         # ── PairManager resolution ────────────────────────────────────────
         if pair_manager:
-            def _scan_commodity(sym_key=symbol_key, gen=generic, qt=qty_times):
+            def _scan_commodity(sym_key=symbol_key, gen=generic, qt=qty_times, hdg=hedge):
                 """Fresh-scan closure for this commodity."""
                 actual = Fyers.resolve_commodity_symbol(gen, mcx_df)
                 if not actual:
@@ -327,6 +333,7 @@ def scan_and_dump_commodity_pairs(
                     "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
                     "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
                     "VIX": pair["VIX"], "commodity": actual, "qty": qty,
+                    "hedge": hdg,
                 }
 
             resolved = pair_manager.resolve_pair(fyers, symbol_key, _scan_commodity)
@@ -380,6 +387,7 @@ def scan_and_dump_commodity_pairs(
             "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
             "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
             "VIX": pair["VIX"], "commodity": actual, "qty": qty,
+            "hedge": hedge,
         }
         log_strategy_event(
             symbol_key, "SCAN", "COMMODITY_PAIR_FOUND", qty=qty,
@@ -586,6 +594,10 @@ def inner_loop(
         pe_symbol  = info["PE"]
         underlying = info.get("indices", info.get("commodity", ""))
         base_qty   = info["qty"]
+        # Per-pair profit target: from pairs JSON (set by scan), with
+        # fallback to market-type default
+        default_hedge = STRATEGY_HEDGE_INDEX if market_type == "INDEX" else STRATEGY_HEDGE_COMMODITY
+        pair_hedge = info.get("hedge", default_hedge)
 
         write_app_status(mode, str(current_day), status="trading",
                          message=f"Trading {symbol_key} | CE={ce_symbol} PE={pe_symbol}")
@@ -684,6 +696,7 @@ def inner_loop(
                     base_qty=base_qty,
                     power_list=power_list,
                     position_df=pos_df,
+                    hedge=pair_hedge,
                 )
 
                 # ── Step D: Execute orders ────────────────────────────────

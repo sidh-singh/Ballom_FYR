@@ -21,9 +21,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from constants import (
     Transaction,
-    STRATEGY_HEDGE,
-    STRATEGY_FACTOR,
-    STRATEGY_TIMES,
+    STRATEGY_HEDGE_INDEX,
+    STRATEGY_HEDGE_COMMODITY,
     STRATEGY_PRODUCT_TYPE,
     FIBO_SEQUENCE_LENGTH,
 )
@@ -65,10 +64,13 @@ class HeikenAshiMartingale:
     """
 
     # ── tunable parameters (from constants.py) ────────────────────────────────
-    HEDGE           = STRATEGY_HEDGE
-    FACTOR          = STRATEGY_FACTOR
-    TIMES           = STRATEGY_TIMES
     PRODUCT_TYPE    = STRATEGY_PRODUCT_TYPE
+
+    # Pre-compute fibonacci sequence once (shared across all instances)
+    _FIBO = [0, 1]
+    for _i in range(2, FIBO_SEQUENCE_LENGTH):
+        _FIBO.append(_FIBO[-1] + _FIBO[-2])
+    _FIBO = _FIBO[2:]  # [1, 2, 3, 5, 8, 13, 21, 34, 55, …]
 
     def __init__(self, mode: str = "demo", brake: bool = False, max_balance_usage: float = 0, tracker: PositionTracker | None = None) -> None:
         self.mode = mode
@@ -125,20 +127,29 @@ class HeikenAshiMartingale:
 
     # ── fibonacci helpers ──────────────────────────────────────────────────────
 
-    @staticmethod
-    def _recur_fibo(n: int) -> int:
-        if n <= 1:
-            return n
-        return HeikenAshiMartingale._recur_fibo(n - 1) + HeikenAshiMartingale._recur_fibo(n - 2)
-
     @classmethod
-    def _fibo_threshold(cls, position_count: int) -> float:
-        """Loss threshold = fib(position_count) ^ factor × times."""
-        fib = [cls._recur_fibo(i) for i in range(FIBO_SEQUENCE_LENGTH)][2:]
+    def _fibo_threshold(cls, martingale_count: int, hedge: float) -> float:
+        """
+        Loss threshold before the *next* martingale fires.
+
+            threshold = fibonacci[martingale_count] × hedge
+
+        With HEDGE=500 this produces barriers at:
+            level 0 → -500   (1×500)
+            level 1 → -1000  (2×500)
+            level 2 → -1500  (3×500)
+            level 3 → -2500  (5×500)
+            level 4 → -4000  (8×500)
+            level 5 → -6500  (13×500)
+            …
+
+        The increasing gaps prevent rapid-fire martingale adds.
+        """
         try:
-            return (fib[position_count] * cls.TIMES) ** cls.FACTOR
-        except (ValueError, IndexError):
-            return cls.TIMES ** cls.FACTOR
+            multiplier = cls._FIBO[martingale_count]
+        except IndexError:
+            multiplier = cls._FIBO[-1]  # cap at max fibonacci
+        return multiplier * hedge
 
     @classmethod
     def _fibo_next_qty(cls, current_qty: int, lot_size: int) -> int:
@@ -149,13 +160,18 @@ class HeikenAshiMartingale:
         if current_qty <= 0 or lot_size <= 0:
             return lot_size
         current_lots = abs(current_qty) // lot_size
-        fib = [cls._recur_fibo(i) for i in range(FIBO_SEQUENCE_LENGTH)][2:]
         try:
-            idx = fib.index(current_lots) + 1
-            next_lots = fib[idx] if idx < len(fib) else fib[-1]
+            idx = cls._FIBO.index(current_lots) + 1
+            next_lots = cls._FIBO[idx] if idx < len(cls._FIBO) else cls._FIBO[-1]
         except (ValueError, IndexError):
             next_lots = current_lots + 1
         return int(next_lots * lot_size)
+
+    def _get_martingale_count(self, symbol: str) -> int:
+        """Read martingale level from tracker (0 = no martingale yet)."""
+        if self.tracker:
+            return self.tracker.get_martingale_count(symbol)
+        return 0
 
     # ── position introspection ─────────────────────────────────────────────────
 
@@ -191,6 +207,7 @@ class HeikenAshiMartingale:
         base_qty: int,
         power_list: list[tuple],
         position_df,
+        hedge: float = STRATEGY_HEDGE_INDEX,
     ) -> tuple[OrderAction, OrderAction]:
         """
         Determine the trading action for CE and PE legs.
@@ -204,6 +221,7 @@ class HeikenAshiMartingale:
                        (pe_power, pe_list, pe_cross),
                        (idx_power, idx_list, idx_cross)]
         position_df : DataFrame from fyers.position()
+        hedge       : ₹ profit target for this pair (default: index HEDGE)
 
         Returns
         ───────
@@ -235,8 +253,10 @@ class HeikenAshiMartingale:
             ce_pl = ce_total_pl
             pe_pl = pe_total_pl
 
-        ce_count = 1 if abs(ce_qty) > 0 else 0
-        pe_count = 1 if abs(pe_qty) > 0 else 0
+        # Martingale level from tracker (0 = no martingale yet, 1 = one add, etc.)
+        # This drives the fibonacci-scaled loss barrier: fib[level] × hedge
+        ce_mg_level = self._get_martingale_count(ce_symbol)
+        pe_mg_level = self._get_martingale_count(pe_symbol)
 
         # Defaults — do nothing
         ce_action = OrderAction(
@@ -325,27 +345,27 @@ class HeikenAshiMartingale:
             #     log_strategy_event(ce_symbol, "CE", "EXIT_TREND_FLIP",
             #                         qty=ce_qty, pl=ce_pl,
             #                         details=f"Index now BEARISH — closing CE")
-            if ce_pl > self.HEDGE:
+            if ce_pl > hedge:
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
                 log_strategy_event(ce_symbol, "CE", "EXIT_PROFIT",
                                     qty=ce_qty, pl=ce_pl,
-                                    details=f"P&L {ce_pl:.2f} > target {self.HEDGE}")
+                                    details=f"P&L {ce_pl:.2f} > target {hedge}")
             elif ce_list[0] == 0:
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
                 log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"Adverse crossover ({ce_cross[0]})")
-            elif ce_pl < -self._fibo_threshold(ce_count):
-                thr = self._fibo_threshold(ce_count)
+            elif ce_pl < -self._fibo_threshold(ce_mg_level, hedge):
+                thr = self._fibo_threshold(ce_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
                 ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 ce_action.qty = ce_qty
                 ce_action.martingale_qty = mg_qty
                 log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY",
                                     qty=mg_qty, pl=ce_pl,
-                                    details=f"P&L {ce_pl:.2f} < -{thr:.2f}")
+                                    details=f"P&L {ce_pl:.2f} < -{thr:.2f} (level={ce_mg_level})")
 
         # ─────────────────────────────────────────────────────────────────────
         #  PE LOGIC — only when indices are BEARISH
@@ -360,27 +380,27 @@ class HeikenAshiMartingale:
             #     log_strategy_event(pe_symbol, "PE", "EXIT_TREND_FLIP",
             #                         qty=pe_qty, pl=pe_pl,
             #                         details=f"Index now BULLISH — closing PE")
-            if pe_pl > self.HEDGE:
+            if pe_pl > hedge:
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
                 log_strategy_event(pe_symbol, "PE", "EXIT_PROFIT",
                                     qty=pe_qty, pl=pe_pl,
-                                    details=f"P&L {pe_pl:.2f} > target {self.HEDGE}")
+                                    details=f"P&L {pe_pl:.2f} > target {hedge}")
             elif pe_list[0] == 0:
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
                 log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"Adverse crossover ({pe_cross[0]})")
-            elif pe_pl < -self._fibo_threshold(pe_count):
-                thr = self._fibo_threshold(pe_count)
+            elif pe_pl < -self._fibo_threshold(pe_mg_level, hedge):
+                thr = self._fibo_threshold(pe_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)
                 pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 pe_action.qty = pe_qty
                 pe_action.martingale_qty = mg_qty
                 log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY",
                                     qty=mg_qty, pl=pe_pl,
-                                    details=f"P&L {pe_pl:.2f} < -{thr:.2f}")
+                                    details=f"P&L {pe_pl:.2f} < -{thr:.2f} (level={pe_mg_level})")
 
         return ce_action, pe_action
 

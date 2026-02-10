@@ -237,6 +237,13 @@ class PositionTracker:
             symbol, effective_pl, api_total_pl, booked, qty, "SNAPSHOT",
         )
 
+    def get_martingale_count(self, symbol: str) -> int:
+        """Return the number of martingale adds for *symbol* today."""
+        entry = self._data.get(symbol)
+        if not entry or not isinstance(entry, dict):
+            return 0
+        return entry.get("martingale_count", 0)
+
     def reset_for_new_day(self) -> None:
         """Reset tracking state for a new trading day."""
         self._current_date = date.today().isoformat()

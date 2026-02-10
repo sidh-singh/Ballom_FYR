@@ -65,11 +65,19 @@ INNER_LOOP_INTERVAL = 1   # seconds between each strategy evaluation cycle
 #  STRATEGY TUNING PARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-STRATEGY_HEDGE          = 500      # Profit target (₹) for closing positions
-STRATEGY_FACTOR         = 1.6      # Exponent for fibonacci loss threshold
-STRATEGY_TIMES          = 1        # Base multiplier for fibonacci sizing
-STRATEGY_PRODUCT_TYPE   = "MARGIN"
-FIBO_SEQUENCE_LENGTH    = 25       # Length of fibonacci sequence for martingale
+# Profit targets (₹) — configurable per-symbol in symbols.json via "hedge" key.
+# These are the defaults when symbols.json doesn't specify a value.
+STRATEGY_HEDGE_INDEX      = 500    # ₹ profit target for index option pairs
+STRATEGY_HEDGE_COMMODITY  = 100    # ₹ profit target for commodity option pairs
+#                                    (commodity lots are often 1-5, so smaller target)
+STRATEGY_PRODUCT_TYPE     = "MARGIN"
+FIBO_SEQUENCE_LENGTH      = 25     # Length of fibonacci sequence for martingale
+
+# Martingale threshold formula (NEW):
+#   threshold[level] = fibonacci[level] × HEDGE
+#   e.g. HEDGE=500 → barriers at -500, -1000, -1500, -2500, -4000, -6500, …
+# The fibonacci sequence [1, 2, 3, 5, 8, 13, 21, …] spaces out martingale adds
+# so they fire less frequently as the drawdown deepens.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
