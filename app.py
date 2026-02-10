@@ -725,12 +725,19 @@ def inner_loop(
                     if has_pos_now:
                         had_positions_ever = True
 
-                # Confirm any pending closes that have now filled
+                # Confirm any pending closes that have now filled.
+                # Read fresh position data so confirm_close gets the
+                # actual post-close pl (not the stale pre-fill estimate).
                 if not has_pos_now:
-                    if strategy.is_pending_close(ce_symbol):
-                        strategy.confirm_close(ce_symbol)
-                    if strategy.is_pending_close(pe_symbol):
-                        strategy.confirm_close(pe_symbol)
+                    pending_ce = strategy.is_pending_close(ce_symbol)
+                    pending_pe = strategy.is_pending_close(pe_symbol)
+                    if pending_ce or pending_pe:
+                        pos_df_fresh, _ = fyers.position()
+                        for _sym in (ce_symbol, pe_symbol):
+                            if strategy.is_pending_close(_sym):
+                                _, _, _, fresh_pl = HeikenAshiMartingale._read_position(
+                                    pos_df_fresh, _sym, "MARGIN")
+                                strategy.confirm_close(_sym, current_api_total_pl=fresh_pl)
 
                 if not has_pos_now and had_positions_ever:
                     # Position was opened and is now fully closed → done
@@ -767,6 +774,17 @@ def main():
 
     fyers = DemoFyers() if mode == "demo" else Fyers()
     tracker = PositionTracker(mode=mode)
+
+    # One-time cleanup: reset corrupted booked_profit values from the old
+    # formula (unrealized-based).  The "_pl_fix_applied" sentinel prevents
+    # this from running more than once per day.
+    if not tracker._data.get("_pl_fix_applied"):
+        tracker.reset_booked_profits()
+        tracker._data["_pl_fix_applied"] = True
+        tracker._save_tracker()
+        log_strategy_event("SYSTEM", "INIT", "PL_FIX_RESET",
+                           details="Booked profits reset — pl-formula fix deployed")
+
     pair_manager = PairManager(mode=mode)
     strategy = HeikenAshiMartingale(
         mode=mode,

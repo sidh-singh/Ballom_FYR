@@ -93,18 +93,31 @@ class HeikenAshiMartingale:
         """True if a close order was sent but position hasn't zeroed out yet."""
         return symbol in self._pending_close
 
-    def confirm_close(self, symbol: str) -> None:
+    def confirm_close(self, symbol: str, current_api_total_pl: float | None = None) -> None:
         """
         Called when position for *symbol* has confirmed netQty=0.
         NOW update the tracker's booked_profit.
+
+        Parameters
+        ──────────
+        current_api_total_pl : If provided, use this FRESH pl value (from
+            the latest position read) instead of the stale value captured
+            when the close order was sent.  This ensures booked_profit
+            reflects the actual post-close pl, not a pre-fill estimate.
         """
         info = self._pending_close.pop(symbol, None)
         if info and self.tracker:
-            self.tracker.record_close(
-                symbol, info["api_total_pl"], info["qty"], info["pl"])
+            # Prefer fresh pl from the current position read
+            api_pl = current_api_total_pl if current_api_total_pl is not None else info["api_total_pl"]
+            # Recompute effective_pl using the tracker's current booked_profit
+            # and the (possibly refreshed) api_pl.  This is the TRUE profit
+            # of the cycle that just closed.
+            effective_pl = self.tracker.get_effective_pl(symbol, api_pl)
+            self.tracker.record_close(symbol, api_pl, info["qty"], effective_pl)
             log_strategy_event(symbol, "CLOSE", "CLOSE_CONFIRMED",
-                               qty=info["qty"], pl=info["pl"],
-                               details=f"Position confirmed closed — tracker updated")
+                               qty=info["qty"], pl=effective_pl,
+                               details=f"Position confirmed closed — tracker updated"
+                                       f" | api_pl={api_pl:.2f}")
 
     def cancel_pending_close(self, symbol: str) -> None:
         """Cancel a pending close (order rejected or timed out)."""
@@ -205,14 +218,22 @@ class HeikenAshiMartingale:
         pe_qty, pe_unrealized, pe_realized, pe_total_pl = self._read_position(
             position_df, pe_symbol, self.PRODUCT_TYPE)
 
-        # Effective P&L for hedge exit: use UNREALIZED profit only
-        # (realized is already booked from previous trades on same symbol)
+        # Effective P&L for the CURRENT open/close cycle:
+        #     effective_pl = pl − booked_profit
+        # where pl = realized + unrealized (Fyers' total day P&L for the symbol)
+        # and booked_profit = pl captured at the most recent close.
+        #
+        # IMPORTANT: We must use `pl` (total), NOT `unrealized_profit` alone.
+        # Fyers recalculates buyAvg/sellAvg across ALL intraday trades, so
+        # unrealized_profit is NOT the clean floating P&L of the current
+        # position cycle — it's contaminated by blended averages.  Using
+        # `pl` (total) cancels perfectly with the previous booked_profit.
         if self.tracker:
-            ce_pl = self.tracker.get_effective_pl(ce_symbol, ce_unrealized)
-            pe_pl = self.tracker.get_effective_pl(pe_symbol, pe_unrealized)
+            ce_pl = self.tracker.get_effective_pl(ce_symbol, ce_total_pl)
+            pe_pl = self.tracker.get_effective_pl(pe_symbol, pe_total_pl)
         else:
-            ce_pl = ce_unrealized
-            pe_pl = pe_unrealized
+            ce_pl = ce_total_pl
+            pe_pl = pe_total_pl
 
         ce_count = 1 if abs(ce_qty) > 0 else 0
         pe_count = 1 if abs(pe_qty) > 0 else 0
@@ -248,8 +269,8 @@ class HeikenAshiMartingale:
 
         if self.is_pending_close(ce_symbol):
             if ce_qty == 0:
-                # Close order filled — confirm and update tracker
-                self.confirm_close(ce_symbol)
+                # Close order filled — confirm with FRESH pl from position read
+                self.confirm_close(ce_symbol, current_api_total_pl=ce_total_pl)
             else:
                 # Still open — re-issue close
                 ce_action.status = Transaction.CLOSE_BUY
@@ -260,7 +281,7 @@ class HeikenAshiMartingale:
                 # Also handle PE pending in parallel
                 if self.is_pending_close(pe_symbol):
                     if pe_qty == 0:
-                        self.confirm_close(pe_symbol)
+                        self.confirm_close(pe_symbol, current_api_total_pl=pe_total_pl)
                     else:
                         pe_action.status = Transaction.CLOSE_BUY
                         pe_action.qty = pe_qty
@@ -268,7 +289,7 @@ class HeikenAshiMartingale:
 
         if self.is_pending_close(pe_symbol):
             if pe_qty == 0:
-                self.confirm_close(pe_symbol)
+                self.confirm_close(pe_symbol, current_api_total_pl=pe_total_pl)
             else:
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty

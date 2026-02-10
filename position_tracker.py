@@ -130,8 +130,15 @@ class PositionTracker:
 
             effective_pl = api_total_pl − booked_profit
 
-        Where `booked_profit` is the `api_total_pl` captured at the
-        most recent HEDGE close (or 0 if no closes today).
+        Parameters
+        ──────────
+        api_total_pl : Fyers' ``pl`` field = ``realized_profit + unrealized_profit``.
+            ⚠️  MUST be the TOTAL pl, not just unrealized_profit!
+            Fyers recalculates buyAvg/sellAvg across all intraday trades,
+            so unrealized_profit alone is contaminated by blended averages
+            and does NOT represent the current cycle's floating P&L.
+            The total ``pl`` always equals the true day P&L and cancels
+            correctly with ``booked_profit``.
         """
         entry = self._data.get(symbol)
         if not entry or not isinstance(entry, dict):
@@ -142,9 +149,17 @@ class PositionTracker:
         self, symbol: str, api_total_pl: float, qty: int, effective_pl: float,
     ) -> None:
         """
-        Called after a HEDGE close order is placed.
-        Sets `booked_profit = api_total_pl` so the next cycle's
+        Called after a HEDGE close is confirmed (netQty=0).
+
+        Sets ``booked_profit = api_total_pl`` so the next cycle's
         effective_pl starts from ~0.
+
+        Parameters
+        ──────────
+        api_total_pl  : Fyers' ``pl`` (= realized + unrealized) at the
+                        time the close was confirmed.  Must be the TOTAL,
+                        not just unrealized.
+        effective_pl   : The cycle P&L = api_total_pl − old booked_profit.
         """
         entry = self._data.get(symbol)
         if not entry or not isinstance(entry, dict):
@@ -228,6 +243,22 @@ class PositionTracker:
         self._data = {"_date": self._current_date}
         self._save_tracker()
         self._write_json_atomic(self._history_file, [])
+
+    def reset_booked_profits(self) -> None:
+        """
+        Emergency mid-day reset: zero out all booked_profit values.
+
+        Use this ONCE after deploying the pl-formula fix to clear
+        corrupted booked_profit values from the old (wrong) formula.
+        The next close will re-establish correct booked_profit.
+        """
+        for key, val in self._data.items():
+            if key.startswith("_") or not isinstance(val, dict):
+                continue
+            val["booked_profit"] = 0.0
+            val["total_profit_closed"] = 0.0
+            val["close_count"] = 0
+        self._save_tracker()
 
     def get_daily_summary(self) -> dict:
         """Aggregate stats for the dashboard KPI cards."""
