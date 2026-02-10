@@ -324,7 +324,6 @@ class HeikenAshiMartingale:
 
         if ce_qty == 0 and pe_qty == 0:
             # ── entry ────────────────────────────────────────────────────
-            
             if (ce_list[0] == 1) and (idx_list[0] == 1) and (ce_cross[0] == 3):
                 ce_action.status = Transaction.BUY
                 log_strategy_event(ce_symbol, "CE", "ENTRY_BUY",
@@ -338,13 +337,6 @@ class HeikenAshiMartingale:
 
         elif ce_qty > 0:
             # ── exit / martingale (long CE) ──────────────────────────────
-            # if idx_list[0] == 0:
-            #     # Index trend flipped BEARISH → close CE immediately
-            #     ce_action.status = Transaction.CLOSE_BUY
-            #     ce_action.qty = ce_qty
-            #     log_strategy_event(ce_symbol, "CE", "EXIT_TREND_FLIP",
-            #                         qty=ce_qty, pl=ce_pl,
-            #                         details=f"Index now BEARISH — closing CE")
             if ce_pl > hedge:
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
@@ -373,13 +365,6 @@ class HeikenAshiMartingale:
 
         elif pe_qty > 0:
             # ── exit / martingale (long PE) ──────────────────────────────
-            # if idx_list[0] == 1:
-            #     # Index trend flipped BULLISH → close PE immediately
-            #     pe_action.status = Transaction.CLOSE_BUY
-            #     pe_action.qty = pe_qty
-            #     log_strategy_event(pe_symbol, "PE", "EXIT_TREND_FLIP",
-            #                         qty=pe_qty, pl=pe_pl,
-            #                         details=f"Index now BULLISH — closing PE")
             if pe_pl > hedge:
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
