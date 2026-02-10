@@ -424,6 +424,9 @@ def _action_badge(action: str) -> html.Span:
     elif "BLOCKED" in act_upper or "BRAKE" in act_upper:
         bg, fg, glow = "#7f8c8d", "#ecf0f1", "rgba(127, 140, 141, 0.3)"
         icon = "\U0001f6ab"
+    elif "LOCKED" in act_upper or "CLEARED" in act_upper or "OVERNIGHT" in act_upper:
+        bg, fg, glow = "#2980b9", "#e6f0f6", "rgba(41, 128, 185, 0.3)"
+        icon = "\U0001f512" if "LOCKED" in act_upper else "\U0001f513"
     else:
         bg, fg, glow = "#2c3e50", "#bdc3c7", "rgba(44, 62, 80, 0.3)"
         icon = "\U0001f4cc"

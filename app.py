@@ -37,6 +37,7 @@ from demo_fyers import DemoFyers
 from indicator import SmoothedHeikenAshi
 from strategy import HeikenAshiMartingale
 from position_tracker import PositionTracker
+from pair_manager import PairManager
 from constants import (
     Transaction,
     SYMBOLS_JSON,
@@ -152,53 +153,104 @@ def _dump_positions_and_account(fyers: Fyers) -> None:
 #  OPTION-PAIR SCANNING  → JSON
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df) -> int:
+def scan_and_dump_index_pairs(
+    fyers: Fyers,
+    indices: list,
+    option_df,
+    pair_manager: PairManager | None = None,
+) -> int:
     """
-    For each index in config, call the option-chain scanner,
-    look up lot size from the downloaded NSE F&O CSV, and dump to JSON.
-    Fresh scan each time — stale entries are NOT preserved.
-    Returns the number of valid pairs found.
+    For each index in config, resolve the active CE/PE pair via PairManager:
+      1. If a locked pair has open positions → keep it (no scan)
+      2. If overnight positions detected     → lock them (no scan)
+      3. Otherwise                           → fresh scan, lock result
+
+    Exactly 1 CE + 1 PE per index symbol_key at any time.
+    Returns the number of valid pairs written to option_pairs.json.
     """
-    result = {}   # ← fresh start: don't carry over stale/broken entries
+    result = {}
 
     for entry in indices:
         symbol_key = entry["symbol"]
         underlying = entry["indices"]
         qty_times  = entry.get("qty_times", 1)
 
+        # ── PairManager resolution (locked pair / overnight / fresh scan) ─
+        if pair_manager:
+            def _scan_index(sym_key=symbol_key, und=underlying, qt=qty_times):
+                """Fresh-scan closure for this index."""
+                pair = fyers.fetch_option_pair(und, asset_type="INDEX")
+                debug_trail = pair.get("Debug", "")
+                if not pair.get("Recommended"):
+                    log_strategy_event(sym_key, "SCAN", "SKIP_INDEX",
+                                       details=f"{pair.get('Message', 'skipped')} || {debug_trail}")
+                    return None
+                try:
+                    lot = Fyers.get_lot_size(pair["CE_Symbol"], option_df)
+                except ValueError as e:
+                    log_strategy_event(sym_key, "SCAN", "LOT_ERROR", details=str(e))
+                    return None
+                qty = int(lot * qt)
+                ce_sym = pair.get("CE_Symbol", "")
+                pe_sym = pair.get("PE_Symbol", "")
+                if not ce_sym or not pe_sym:
+                    log_strategy_event(sym_key, "SCAN", "INVALID_PAIR",
+                                       details=f"Empty symbol: CE={ce_sym!r} PE={pe_sym!r}")
+                    return None
+                log_strategy_event(
+                    sym_key, "SCAN", "INDEX_PAIR_FOUND", qty=qty,
+                    details=f"CE={ce_sym} PE={pe_sym} Exp={pair['Expiry']} || {debug_trail}",
+                )
+                return {
+                    "CE": ce_sym, "PE": pe_sym,
+                    "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
+                    "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
+                    "VIX": pair["VIX"], "indices": und, "qty": qty,
+                }
+
+            resolved = pair_manager.resolve_pair(fyers, symbol_key, _scan_index)
+            if resolved:
+                # Ensure qty is set (overnight detection may lack it)
+                if not resolved.get("qty"):
+                    try:
+                        lot = Fyers.get_lot_size(resolved["CE"], option_df)
+                        resolved["qty"] = int(lot * qty_times)
+                        pair_manager.lock_pair(symbol_key, resolved["CE"], resolved["PE"],
+                                               **{k: v for k, v in resolved.items() if k not in ("CE", "PE")})
+                    except Exception:
+                        resolved["qty"] = 0
+                if not resolved.get("indices"):
+                    resolved["indices"] = underlying
+                result[symbol_key] = {
+                    k: v for k, v in resolved.items()
+                    if k not in ("locked_at", "source")
+                }
+            continue
+
+        # ── Fallback: no PairManager (backward compat) ────────────────────
         pair = fyers.fetch_option_pair(underlying, asset_type="INDEX")
         debug_trail = pair.get("Debug", "")
         if not pair.get("Recommended"):
             log_strategy_event(symbol_key, "SCAN", "SKIP_INDEX",
                                details=f"{pair.get('Message', 'skipped')} || {debug_trail}")
             continue
-
         try:
             lot = Fyers.get_lot_size(pair["CE_Symbol"], option_df)
         except ValueError as e:
             log_strategy_event(symbol_key, "SCAN", "LOT_ERROR", details=str(e))
             continue
-
         qty = int(lot * qty_times)
-
-        # Validate both CE and PE symbols are non-empty
         ce_sym = pair.get("CE_Symbol", "")
         pe_sym = pair.get("PE_Symbol", "")
         if not ce_sym or not pe_sym:
             log_strategy_event(symbol_key, "SCAN", "INVALID_PAIR",
                                details=f"Empty symbol: CE={ce_sym!r} PE={pe_sym!r}")
             continue
-
         result[symbol_key] = {
-            "CE": ce_sym,
-            "PE": pe_sym,
-            "CE_Strike": pair["CE_Strike"],
-            "PE_Strike": pair["PE_Strike"],
-            "Expiry": pair["Expiry"],
-            "Trend_Score": pair["Trend_Score"],
-            "VIX": pair["VIX"],
-            "indices": underlying,
-            "qty": qty,
+            "CE": ce_sym, "PE": pe_sym,
+            "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
+            "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
+            "VIX": pair["VIX"], "indices": underlying, "qty": qty,
         }
         log_strategy_event(
             symbol_key, "SCAN", "INDEX_PAIR_FOUND", qty=qty,
@@ -211,14 +263,22 @@ def scan_and_dump_index_pairs(fyers: Fyers, indices: list, option_df) -> int:
     return len(result)
 
 
-def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> int:
+def scan_and_dump_commodity_pairs(
+    fyers: Fyers,
+    commodities: list,
+    mcx_df,
+    pair_manager: PairManager | None = None,
+) -> int:
     """
-    For each enabled commodity, resolve to active futures symbol,
-    scan option chain, look up lot size from MCX CSV, dump to JSON.
-    Fresh scan each time — stale entries are NOT preserved.
-    Returns the number of valid pairs found.
+    For each enabled commodity, resolve the active CE/PE pair via PairManager:
+      1. If a locked pair has open positions → keep it (no scan)
+      2. If overnight positions detected     → lock them (no scan)
+      3. Otherwise                           → fresh scan, lock result
+
+    Exactly 1 CE + 1 PE per commodity symbol_key at any time.
+    Returns the number of valid pairs written to commodity_pairs.json.
     """
-    result = {}   # ← fresh start: don't carry over stale/broken entries
+    result = {}
 
     for entry in commodities:
         if not entry.get("enabled", True):
@@ -228,50 +288,98 @@ def scan_and_dump_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> in
         generic    = entry["commodity"]
         qty_times  = entry.get("qty_times", 1)
 
+        # ── PairManager resolution ────────────────────────────────────────
+        if pair_manager:
+            def _scan_commodity(sym_key=symbol_key, gen=generic, qt=qty_times):
+                """Fresh-scan closure for this commodity."""
+                actual = Fyers.resolve_commodity_symbol(gen, mcx_df)
+                if not actual:
+                    log_strategy_event(sym_key, "SCAN", "RESOLVE_FAIL",
+                                       details=f"Could not resolve {gen}")
+                    return None
+                pair = fyers.fetch_option_pair(
+                    actual, asset_type="COMMODITY",
+                    max_premium_per_lot=55000, min_trend_score=0.35,
+                )
+                debug_trail = pair.get("Debug", "")
+                if not pair.get("Recommended"):
+                    log_strategy_event(sym_key, "SCAN", "SKIP_COMMODITY",
+                                       details=f"{pair.get('Message', 'skipped')} || {debug_trail}")
+                    return None
+                try:
+                    lot = Fyers.get_lot_size(pair["CE_Symbol"], mcx_df)
+                except ValueError as e:
+                    log_strategy_event(sym_key, "SCAN", "LOT_ERROR", details=str(e))
+                    return None
+                qty = int(lot * qt)
+                ce_sym = pair.get("CE_Symbol", "")
+                pe_sym = pair.get("PE_Symbol", "")
+                if not ce_sym or not pe_sym:
+                    log_strategy_event(sym_key, "SCAN", "INVALID_PAIR",
+                                       details=f"Empty symbol: CE={ce_sym!r} PE={pe_sym!r}")
+                    return None
+                log_strategy_event(
+                    sym_key, "SCAN", "COMMODITY_PAIR_FOUND", qty=qty,
+                    details=f"CE={ce_sym} PE={pe_sym} UND={actual} || {debug_trail}",
+                )
+                return {
+                    "CE": ce_sym, "PE": pe_sym,
+                    "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
+                    "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
+                    "VIX": pair["VIX"], "commodity": actual, "qty": qty,
+                }
+
+            resolved = pair_manager.resolve_pair(fyers, symbol_key, _scan_commodity)
+            if resolved:
+                if not resolved.get("qty"):
+                    try:
+                        lot = Fyers.get_lot_size(resolved["CE"], mcx_df)
+                        resolved["qty"] = int(lot * qty_times)
+                        pair_manager.lock_pair(symbol_key, resolved["CE"], resolved["PE"],
+                                               **{k: v for k, v in resolved.items() if k not in ("CE", "PE")})
+                    except Exception:
+                        resolved["qty"] = 0
+                if not resolved.get("commodity"):
+                    actual = Fyers.resolve_commodity_symbol(generic, mcx_df)
+                    resolved["commodity"] = actual or generic
+                result[symbol_key] = {
+                    k: v for k, v in resolved.items()
+                    if k not in ("locked_at", "source")
+                }
+            continue
+
+        # ── Fallback: no PairManager ──────────────────────────────────────
         actual = Fyers.resolve_commodity_symbol(generic, mcx_df)
         if not actual:
             log_strategy_event(symbol_key, "SCAN", "RESOLVE_FAIL",
                                details=f"Could not resolve {generic}")
             continue
-
         pair = fyers.fetch_option_pair(
-            actual,
-            asset_type="COMMODITY",
-            max_premium_per_lot=55000,
-            min_trend_score=0.35,
+            actual, asset_type="COMMODITY",
+            max_premium_per_lot=55000, min_trend_score=0.35,
         )
         debug_trail = pair.get("Debug", "")
         if not pair.get("Recommended"):
             log_strategy_event(symbol_key, "SCAN", "SKIP_COMMODITY",
                                details=f"{pair.get('Message', 'skipped')} || {debug_trail}")
             continue
-
         try:
             lot = Fyers.get_lot_size(pair["CE_Symbol"], mcx_df)
         except ValueError as e:
             log_strategy_event(symbol_key, "SCAN", "LOT_ERROR", details=str(e))
             continue
-
         qty = int(lot * qty_times)
-
-        # Validate both CE and PE symbols are non-empty
         ce_sym = pair.get("CE_Symbol", "")
         pe_sym = pair.get("PE_Symbol", "")
         if not ce_sym or not pe_sym:
             log_strategy_event(symbol_key, "SCAN", "INVALID_PAIR",
                                details=f"Empty symbol: CE={ce_sym!r} PE={pe_sym!r}")
             continue
-
         result[symbol_key] = {
-            "CE": ce_sym,
-            "PE": pe_sym,
-            "CE_Strike": pair["CE_Strike"],
-            "PE_Strike": pair["PE_Strike"],
-            "Expiry": pair["Expiry"],
-            "Trend_Score": pair["Trend_Score"],
-            "VIX": pair["VIX"],
-            "commodity": actual,
-            "qty": qty,
+            "CE": ce_sym, "PE": pe_sym,
+            "CE_Strike": pair["CE_Strike"], "PE_Strike": pair["PE_Strike"],
+            "Expiry": pair["Expiry"], "Trend_Score": pair["Trend_Score"],
+            "VIX": pair["VIX"], "commodity": actual, "qty": qty,
         }
         log_strategy_event(
             symbol_key, "SCAN", "COMMODITY_PAIR_FOUND", qty=qty,
@@ -416,6 +524,7 @@ def inner_loop(
     timeframe: str = DEFAULT_TIMEFRAME,
     candles: int = DEFAULT_CANDLES,
     tracker: PositionTracker | None = None,
+    pair_manager: PairManager | None = None,
 ) -> date:
     """
     Blocking inner loop: for every symbol in *pairs_json* —
@@ -424,7 +533,7 @@ def inner_loop(
       2. Compute SHA + get_symbol_details for all three
       3. strategy.evaluate() → (ce_action, pe_action)
       4. strategy.execute_orders()
-      5. Wait / monitor — if all positions close → break
+      5. Wait / monitor — if all positions close → clear pair lock → break
       6. If day changes → re-auth token inside the loop
 
     Returns the (possibly updated) current_day so the outer loop
@@ -591,6 +700,11 @@ def inner_loop(
                     if not ce_action.is_actionable and not pe_action.is_actionable:
                         pass  # no signal yet — keep waiting
                     else:
+                        # All positions for this pair are closed → clear pair lock
+                        if pair_manager:
+                            pair_manager.clear_pair(symbol_key)
+                            log_strategy_event(symbol_key, "PAIR_MGR", "PAIR_CLEARED_AFTER_CLOSE",
+                                               details=f"CE={ce_symbol} PE={pe_symbol} — lock released")
                         log_strategy_event(symbol_key, "INNER", "ALL_CLOSED",
                                            details="All positions closed — returning to outer loop")
                         break
@@ -619,6 +733,7 @@ def main():
 
     fyers = DemoFyers() if mode == "demo" else Fyers()
     tracker = PositionTracker(mode=mode)
+    pair_manager = PairManager(mode=mode)
     strategy = HeikenAshiMartingale(
         mode=mode,
         brake=bool(brake),
@@ -747,6 +862,10 @@ def main():
                 write_app_status(mode, str(current_day), status="blocked",
                                  message="Commodity positions open — skipping indices")
             else:
+                # PairManager controls whether we scan or reuse locked pairs.
+                # indices_scanned_today gates whether inner_loop can run;
+                # with PairManager, we always "scan" (which may just return
+                # the locked pair) so inner_loop always has fresh data.
                 if not indices_scanned_today:
                     # Guard: option_df must be valid
                     if option_df is None:
@@ -757,7 +876,10 @@ def main():
                         write_app_status(mode, str(current_day), status="scanning",
                                          message="Scanning INDEX option pairs …")
                         try:
-                            n_pairs = scan_and_dump_index_pairs(fyers, indices, option_df)
+                            n_pairs = scan_and_dump_index_pairs(
+                                fyers, indices, option_df,
+                                pair_manager=pair_manager,
+                            )
                             if n_pairs > 0:
                                 indices_scanned_today = True
                             else:
@@ -770,9 +892,8 @@ def main():
                             sleep(10)   # back off before retry
 
                 if indices_scanned_today:
-                    # ── INNER LOOP DISABLED FOR DEBUGGING ──────────────────
                     log_strategy_event("SYSTEM", "DEBUG", "INDEX_SCAN_COMPLETE",
-                                       details="Inner loop disabled — scan-only debug mode")
+                                       details="Entering inner loop for INDEX pairs")
                     try:
                         current_day = inner_loop(
                             fyers, strategy,
@@ -783,7 +904,12 @@ def main():
                             inner_day_ref=current_day,
                             mode=mode,
                             tracker=tracker,
+                            pair_manager=pair_manager,
                         )
+                        # After inner_loop returns, re-scan is allowed on
+                        # next iteration (PairManager decides whether to
+                        # reuse locked pair or scan fresh).
+                        indices_scanned_today = False
                     except Exception as e:
                         log_strategy_event("SYSTEM", "INNER", "INDEX_LOOP_FAIL",
                                            details=str(e))
@@ -805,7 +931,10 @@ def main():
                         write_app_status(mode, str(current_day), status="scanning",
                                          message="Scanning COMMODITY option pairs …")
                         try:
-                            n_pairs = scan_and_dump_commodity_pairs(fyers, commodities, mcx_df)
+                            n_pairs = scan_and_dump_commodity_pairs(
+                                fyers, commodities, mcx_df,
+                                pair_manager=pair_manager,
+                            )
                             if n_pairs > 0:
                                 commodities_scanned_today = True
                             else:
@@ -818,9 +947,8 @@ def main():
                             sleep(10)
 
                 if commodities_scanned_today:
-                    # ── INNER LOOP DISABLED FOR DEBUGGING ──────────────────
                     log_strategy_event("SYSTEM", "DEBUG", "COMMODITY_SCAN_COMPLETE",
-                                       details="Inner loop disabled — scan-only debug mode")
+                                       details="Entering inner loop for COMMODITY pairs")
                     try:
                         current_day = inner_loop(
                             fyers, strategy,
@@ -831,7 +959,10 @@ def main():
                             inner_day_ref=current_day,
                             mode=mode,
                             tracker=tracker,
+                            pair_manager=pair_manager,
                         )
+                        # After inner_loop returns, re-scan is allowed
+                        commodities_scanned_today = False
                     except Exception as e:
                         log_strategy_event("SYSTEM", "INNER", "COMMODITY_LOOP_FAIL",
                                            details=str(e))
