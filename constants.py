@@ -49,7 +49,7 @@ COMMODITY_END   = dt_time(23, 55)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Signal SHA — fast / short-term momentum indicator
-SHA_LENGTH          = 5
+SHA_LENGTH          = 3
 SHA_MA_TYPE         = "RMA"
 
 # Trend SHA — slower / longer-term trend indicator
@@ -71,8 +71,8 @@ DEFAULT_CANDLES     = 500
 # When |GAP%| exceeds HIGH, signal is over-extended from trend.
 # When |GAP%| is below LOW, signal is converging with trend (range-bound).
 
-GAP_RANGE_LOW       = 0.5     # % — below this, signal is too close to trend
-GAP_RANGE_HIGH      = 2.0     # % — above this, signal is diverging from trend
+GAP_RANGE_LOW       = 2.0     # % — below this, signal is too close to trend
+GAP_RANGE_HIGH      = 16.0     # % — above this, signal is diverging from trend
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -149,8 +149,9 @@ INNER_LOOP_INTERVAL = 1   # seconds between each strategy evaluation cycle
 # Profit targets (₹) — configurable per-symbol in symbols.json via "hedge" key.
 # These are the defaults when symbols.json doesn't specify a value.
 STRATEGY_HEDGE_INDEX      = 500    # ₹ profit target for index option pairs
-STRATEGY_HEDGE_COMMODITY  = 100    # ₹ profit target for commodity option pairs
-#                                    (commodity lots are often 1-5, so smaller target)
+STRATEGY_HEDGE_COMMODITY  = 200    # ₹ profit target for commodity option pairs
+#                                    (bumped from 100 → 200 because flat ₹20/order
+#                                     brokerage eats ~48% of a ₹100 target at qty=1)
 STRATEGY_PRODUCT_TYPE     = "MARGIN"
 FIBO_SEQUENCE_LENGTH      = 25     # Length of fibonacci sequence for martingale
 

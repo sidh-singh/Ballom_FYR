@@ -272,6 +272,12 @@ class HeikenAshiMartingale:
         pe_gap_pct = pe_gap_list[0]["gap_pct"] if pe_gap_list else 0.0
         idx_gap_pct = idx_gap_list[0]["gap_pct"] if idx_gap_list else 0.0
 
+        # GAP% range check (Alcadeias-style): only enter when gap between
+        # Signal SHA and Trend SHA is within [LOW, HIGH] — confirms
+        # momentum aligns with trend without over-extension.
+        ce_gap_in_range = GAP_RANGE_LOW <= abs(ce_gap_pct) <= GAP_RANGE_HIGH
+        pe_gap_in_range = GAP_RANGE_LOW <= abs(pe_gap_pct) <= GAP_RANGE_HIGH
+
         ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
         pe_qty, pe_unrealized, pe_realized, pe_total_pl, pe_ltp = self._read_position(
@@ -378,17 +384,22 @@ class HeikenAshiMartingale:
         # ─────────────────────────────────────────────────────────────────────
 
         if ce_qty == 0 and pe_qty == 0:
-            # ── entry ────────────────────────────────────────────────────
-            if (ce_list[0] == 1) and (idx_list[0] == 1) and (ce_cross[0] == 3):
+            # ── entry (Alcadeias-style) ───────────────────────────────
+            # Both Signal SHA and Trend SHA must agree on direction,
+            # IDX must confirm, and GAP% must be in range.
+            # Crossover is still computed but NOT used in entry condition.
+            if (ce_list[0] == 1) and (idx_list[0] == 1) and (ce_t_list and ce_t_list[0] == 1) and ce_gap_in_range:
                 ce_action.status = Transaction.BUY
                 log_strategy_event(ce_symbol, "CE", "ENTRY_BUY",
                                     qty=base_qty,
-                                    details="Strong bullish crossover (3)")
-            elif (pe_list[0] == 1) and (idx_list[0] == 0) and (pe_cross[0] == 3):
+                                    details=f"Signal+Trend bullish, IDX bullish, "
+                                            f"GAP={ce_gap_pct:.2f}% in [{GAP_RANGE_LOW},{GAP_RANGE_HIGH}]")
+            elif (pe_list[0] == 1) and (idx_list[0] == 0) and (pe_t_list and pe_t_list[0] == 1) and pe_gap_in_range:
                 pe_action.status = Transaction.BUY
                 log_strategy_event(pe_symbol, "PE", "ENTRY_BUY",
                                     qty=base_qty,
-                                    details="Strong bullish crossover (3)")
+                                    details=f"Signal+Trend bullish, IDX bearish, "
+                                            f"GAP={pe_gap_pct:.2f}% in [{GAP_RANGE_LOW},{GAP_RANGE_HIGH}]")
 
         elif ce_qty > 0:
             # ── exit / martingale (long CE) ──────────────────────────────
@@ -399,12 +410,14 @@ class HeikenAshiMartingale:
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={ce_charges:.2f})")
-            elif ce_list[0] == 0:
+            elif (ce_t_list and ce_t_list[0] == 0) and (ce_mg_level >= 4):
+                # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
+                # → cut losses (Alcadeias-style adverse exit)
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
                 log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
                                     qty=ce_qty, pl=ce_pl,
-                                    details=f"Adverse crossover ({ce_cross[0]})")
+                                    details=f"Trend SHA bearish + mg_level={ce_mg_level} (>=4)")
             elif ce_pl < -self._fibo_threshold(ce_mg_level, hedge):
                 thr = self._fibo_threshold(ce_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
@@ -428,12 +441,14 @@ class HeikenAshiMartingale:
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={pe_charges:.2f})")
-            elif pe_list[0] == 0:
+            elif (pe_t_list and pe_t_list[0] == 0) and (pe_mg_level >= 4):
+                # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
+                # → cut losses (Alcadeias-style adverse exit)
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
                 log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
                                     qty=pe_qty, pl=pe_pl,
-                                    details=f"Adverse crossover ({pe_cross[0]})")
+                                    details=f"Trend SHA bearish + mg_level={pe_mg_level} (>=4)")
             elif pe_pl < -self._fibo_threshold(pe_mg_level, hedge):
                 thr = self._fibo_threshold(pe_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)

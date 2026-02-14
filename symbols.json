@@ -12,28 +12,28 @@
             "symbol" : "SILVERM",
             "commodity": "SILVER",
             "qty_times" : 1,
-            "hedge" : 100,
+            "hedge" : 200,
             "enabled": true
         },
         {
             "symbol" : "GOLDM",
             "commodity": "GOLD",
             "qty_times" : 1,
-            "hedge" : 100,
+            "hedge" : 200,
             "enabled": true
         },
         {
             "symbol" : "NATURALGAS",
             "commodity": "NATURALGAS",
             "qty_times" : 1,
-            "hedge" : 50,
+            "hedge" : 150,
             "enabled": true
         },
         {
             "symbol" : "CRUDEOIL",
             "commodity": "CRUDEOIL",
             "qty_times" : 1,
-            "hedge" : 100,
+            "hedge" : 200,
             "enabled": true
         }
     ],
