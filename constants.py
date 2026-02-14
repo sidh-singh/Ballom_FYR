@@ -73,11 +73,12 @@ STRATEGY_HEDGE_COMMODITY  = 100    # ₹ profit target for commodity option pair
 STRATEGY_PRODUCT_TYPE     = "MARGIN"
 FIBO_SEQUENCE_LENGTH      = 25     # Length of fibonacci sequence for martingale
 
-# Martingale threshold formula (NEW):
-#   threshold[level] = fibonacci[level] × HEDGE
-#   e.g. HEDGE=500 → barriers at -500, -1000, -1500, -2500, -4000, -6500, …
-# The fibonacci sequence [1, 2, 3, 5, 8, 13, 21, …] spaces out martingale adds
-# so they fire less frequently as the drawdown deepens.
+# Martingale threshold formula (SQUARED FIBONACCI):
+#   threshold[level] = fibonacci[level]² × HEDGE
+#   e.g. HEDGE=500 → barriers at -500, -2000, -4500, -12500, -32000, …
+# Squaring the fibonacci sequence [1, 2, 3, 5, 8, 13, 21, …] produces
+# much wider gaps between martingale adds, aggressively throttling
+# capital usage on extended drawdowns.
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

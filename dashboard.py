@@ -453,8 +453,19 @@ def _action_badge(action: str) -> html.Span:
     })
 
 
-def _build_profit_chart(history_data: list) -> go.Figure:
-    """Build a premium Plotly line chart of effective P&L over time."""
+def _get_available_chart_dates(history_data: list) -> list[str]:
+    """Return up to 7 most recent dates that have chart-worthy data."""
+    chart_actions = ("SNAPSHOT", "CLOSE", "MARTINGALE", "ENTRY")
+    dates = sorted(
+        {e.get("date") for e in history_data
+         if e.get("date") and e.get("action") in chart_actions},
+        reverse=True,
+    )
+    return dates[:7]
+
+
+def _build_profit_chart(history_data: list, selected_date: str | None = None) -> go.Figure:
+    """Build a premium Plotly line chart of effective P&L for one day."""
     empty_layout = dict(
         template="plotly_dark",
         paper_bgcolor="rgba(0,0,0,0)",
@@ -476,21 +487,19 @@ def _build_profit_chart(history_data: list) -> go.Figure:
                            xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
 
-    # Find the most recent day that has chart-worthy data
     chart_actions = ("SNAPSHOT", "CLOSE", "MARTINGALE", "ENTRY")
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Collect all unique dates that have chart data, most recent first
-    dates_with_data = sorted(
-        {e.get("date") for e in history_data
-         if e.get("date") and e.get("action") in chart_actions},
-        reverse=True,
-    )
-
-    # Prefer today; fall back to the most recent day with data
-    chart_date = today if today in dates_with_data else (
-        dates_with_data[0] if dates_with_data else None
-    )
+    # Use the selected date, or default to today / most recent
+    available = _get_available_chart_dates(history_data)
+    if selected_date and selected_date in available:
+        chart_date = selected_date
+    elif today in available:
+        chart_date = today
+    elif available:
+        chart_date = available[0]
+    else:
+        chart_date = None
 
     if not chart_date:
         fig = go.Figure()
@@ -506,7 +515,6 @@ def _build_profit_chart(history_data: list) -> go.Figure:
         and e.get("action") in chart_actions
     ]
 
-    # Will show a "Showing: <date>" annotation when viewing a past day
     showing_past = chart_date != today
 
     symbols: dict = {}
@@ -891,11 +899,28 @@ app.layout = html.Div(
                 # Profit history chart
                 html.Div(style={**CARD_STYLE, "marginBottom": "24px"}, children=[
                     html.Div(style={"display": "flex", "alignItems": "center",
-                                    "gap": "8px", "marginBottom": "12px"}, children=[
-                        html.Span("\U0001f4c8", style={"fontSize": "16px"}),
-                        html.Span("Profit History", style={
-                            "fontSize": "15px", "fontWeight": "600",
-                            "color": COLORS["text"], "letterSpacing": "0.3px"}),
+                                    "justifyContent": "space-between",
+                                    "marginBottom": "12px"}, children=[
+                        html.Div(style={"display": "flex", "alignItems": "center",
+                                        "gap": "8px"}, children=[
+                            html.Span("\U0001f4c8", style={"fontSize": "16px"}),
+                            html.Span("Profit History", style={
+                                "fontSize": "15px", "fontWeight": "600",
+                                "color": COLORS["text"], "letterSpacing": "0.3px"}),
+                        ]),
+                        dcc.Dropdown(
+                            id="profit-date-selector",
+                            placeholder="Select date…",
+                            clearable=False,
+                            style={
+                                "width": "180px",
+                                "backgroundColor": COLORS["bg_secondary"],
+                                "color": COLORS["text"],
+                                "border": f"1px solid {COLORS['card_border']}",
+                                "borderRadius": "10px",
+                                "fontSize": "13px",
+                            },
+                        ),
                     ]),
                     dcc.Graph(id="profit-chart", config={
                         "displayModeBar": True,
@@ -976,11 +1001,14 @@ app.layout = html.Div(
         Output("strategy-log-container", "children"),
         Output("daily-stats-row", "children"),
         Output("profit-chart", "figure"),
+        Output("profit-date-selector", "options"),
+        Output("profit-date-selector", "value"),
     ],
     [Input("refresh-timer", "n_intervals"),
-     Input("mode-selector", "value")],
+     Input("mode-selector", "value"),
+     Input("profit-date-selector", "value")],
 )
-def refresh_dashboard(_n, selected_mode):
+def refresh_dashboard(_n, selected_mode, selected_chart_date):
     paths = _resolve_state_paths(selected_mode or ACTIVE_MODE)
 
     app_data = _read(paths["app_status"])
@@ -1385,12 +1413,31 @@ def refresh_dashboard(_n, selected_mode):
                   "#9b59b6" if daily_martingales > 0 else COLORS["text_dim"], icon="\u26a1"),
     ]
 
-    profit_fig = _build_profit_chart(history_data)
+    profit_fig = _build_profit_chart(history_data, selected_chart_date)
+
+    # Build date dropdown options (last 7 days with data)
+    available_dates = _get_available_chart_dates(history_data)
+    today = datetime.now().strftime("%Y-%m-%d")
+    date_options = []
+    for d in available_dates:
+        if d == today:
+            label = f"Today ({d})"
+        else:
+            label = d
+        date_options.append({"label": label, "value": d})
+
+    # Keep current selection if still valid; otherwise default to first
+    if selected_chart_date and selected_chart_date in available_dates:
+        date_value = selected_chart_date
+    elif available_dates:
+        date_value = available_dates[0]
+    else:
+        date_value = None
 
     return (
         status_text, mode_text, f"Last updated: {last_ts}",
         kpi_cards, pos_table, signal_cards, log_entries,
-        daily_stats_cards, profit_fig,
+        daily_stats_cards, profit_fig, date_options, date_value,
     )
 
 

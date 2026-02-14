@@ -132,24 +132,29 @@ class HeikenAshiMartingale:
         """
         Loss threshold before the *next* martingale fires.
 
-            threshold = fibonacci[martingale_count] × hedge
+            threshold = fibonacci[martingale_count]² × hedge
+
+        Squaring the fibonacci multiplier produces much wider gaps
+        between successive martingale levels, making each add require
+        a significantly deeper drawdown than the previous one.
 
         With HEDGE=500 this produces barriers at:
-            level 0 → -500   (1×500)
-            level 1 → -1000  (2×500)
-            level 2 → -1500  (3×500)
-            level 3 → -2500  (5×500)
-            level 4 → -4000  (8×500)
-            level 5 → -6500  (13×500)
+            level 0 → 1²×500  =    500
+            level 1 → 2²×500  =  2,000
+            level 2 → 3²×500  =  4,500
+            level 3 → 5²×500  = 12,500
+            level 4 → 8²×500  = 32,000
+            level 5 → 13²×500 = 84,500
             …
 
-        The increasing gaps prevent rapid-fire martingale adds.
+        The squared fibonacci gaps aggressively throttle martingale
+        adds, preventing capital blow-up on extended drawdowns.
         """
         try:
             multiplier = cls._FIBO[martingale_count]
         except IndexError:
             multiplier = cls._FIBO[-1]  # cap at max fibonacci
-        return multiplier * hedge
+        return (multiplier ** 2) * hedge
 
     @classmethod
     def _fibo_next_qty(cls, current_qty: int, lot_size: int) -> int:
