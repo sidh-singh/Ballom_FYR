@@ -805,19 +805,29 @@ app.index_string = """<!DOCTYPE html>
     .Select-menu-outer { background: #111628 !important; border-color: rgba(99,115,171,0.2) !important; border-radius: 10px !important; }
     .Select-option.is-focused { background: rgba(124,108,240,0.15) !important; }
     .Select-value-label { color: #e8ecf4 !important; }
-    /* Dash dropdown — force dark readable text on selected value */
+    /* Dash dropdown — dark theme for date selector */
+    #profit-date-selector,
+    #profit-date-selector * { box-sizing: border-box; }
+    #profit-date-selector .Select-control,
+    #profit-date-selector > div { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
     #profit-date-selector .Select-value-label,
-    #profit-date-selector .Select-placeholder { color: #e8ecf4 !important; }
-    #profit-date-selector .Select-input > input { color: #e8ecf4 !important; }
-    #profit-date-selector .Select-control { background: #0f1423 !important; }
-    #profit-date-selector .Select-menu-outer { background: #0f1423 !important; }
-    #profit-date-selector .Select-option { color: #e8ecf4 !important; }
-    #profit-date-selector .Select-option.is-focused { background: rgba(124,108,240,0.25) !important; }
-    #profit-date-selector .Select-arrow { border-color: #a3adc4 transparent transparent !important; }
-    /* Also override the newer Dash dropdown markup */
-    #profit-date-selector span.Select-value-label { color: #e8ecf4 !important; font-weight: 600 !important; }
+    #profit-date-selector .Select-placeholder,
+    #profit-date-selector span[class*="value"],
     #profit-date-selector div[class*="singleValue"],
-    #profit-date-selector div[class*="SingleValue"] { color: #e8ecf4 !important; font-weight: 600 !important; }
+    #profit-date-selector div[class*="SingleValue"],
+    #profit-date-selector div[class*="placeholder"] { color: #e8ecf4 !important; font-weight: 600 !important; font-size: 13px !important; }
+    #profit-date-selector .Select-input > input,
+    #profit-date-selector input { color: #e8ecf4 !important; }
+    #profit-date-selector .Select-menu-outer,
+    #profit-date-selector div[class*="menu"] { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
+    #profit-date-selector .Select-option,
+    #profit-date-selector div[class*="option"] { color: #e8ecf4 !important; background: transparent !important; }
+    #profit-date-selector .Select-option.is-focused,
+    #profit-date-selector div[class*="option"]:hover { background: rgba(124,108,240,0.25) !important; }
+    #profit-date-selector .Select-arrow { border-color: #a3adc4 transparent transparent !important; }
+    #profit-date-selector svg { fill: #a3adc4 !important; }
+    /* Force the outer wrapper to also be dark */
+    #profit-date-selector { background: #0f1423 !important; border-radius: 10px !important; }
 
     /* Strategy Log — detail popup on hover / tap */
     .log-entry-wrapper {
