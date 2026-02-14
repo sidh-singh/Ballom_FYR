@@ -165,6 +165,7 @@ def write_signal_state(
     ce_gap: list | None = None,
     pe_gap: list | None = None,
     idx_gap: list | None = None,
+    market_type: str = "INDEX",
 ) -> None:
     """Upsert one symbol's signal data (signal SHA + trend SHA + GAP%)."""
     data = _read_json(SIGNAL_STATE_FILE)
@@ -173,6 +174,7 @@ def write_signal_state(
         "ce_symbol": ce_symbol,
         "pe_symbol": pe_symbol,
         "underlying": underlying,
+        "market_type": market_type,
         # Signal SHA
         "ce": {"power": ce_power, "list": ce_list, "crossover": ce_crossover,
                "sha": ce_sha_debug or []},

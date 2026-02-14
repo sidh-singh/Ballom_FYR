@@ -32,6 +32,8 @@ from constants import (
     STATE_DIR_BASE,
     DASHBOARD_PORT,
     DASHBOARD_REFRESH_MS,
+    SHA_LENGTH,
+    SHA_TREND_LENGTH,
     get_state_dir,
 )
 
@@ -1369,7 +1371,13 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     # Signal cards
     signal_cards = []
     if isinstance(sig_data, dict):
-        for sym_key, sig in sig_data.items():
+        # Sort: indices first, then commodities
+        def _sort_key(item):
+            _sig = item[1]
+            mt = _sig.get("market_type", "")
+            return (0 if mt == "INDEX" else 1, item[0])
+
+        for sym_key, sig in sorted(sig_data.items(), key=_sort_key):
             idx_trend = sig.get("idx_trend", "\u2014")
             is_bull = idx_trend == "BULLISH"
             trend_color = COLORS["positive"] if is_bull else COLORS["negative"]
@@ -1435,8 +1443,15 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                     ]),
                     # ── Signal SHA section ─────────────────────────────────
                     html.Div(style={
+                        "padding": "10px 18px 0",
+                    }, children=[
+                        html.Span(f"\U0001f4ca SIGNAL SHA ({SHA_LENGTH})", style={
+                            "fontSize": "0.7rem", "fontWeight": "700",
+                            "color": COLORS["text_dim"], "letterSpacing": "0.5px"}),
+                    ]),
+                    html.Div(style={
                         "display": "grid", "gridTemplateColumns": "64px 1fr 1fr 1fr",
-                        "gap": "8px", "padding": "10px 18px 0",
+                        "gap": "8px", "padding": "6px 18px 0",
                     }, children=[
                         html.Span(""),
                         html.Span("POWER", style=col_hdr),
@@ -1462,7 +1477,7 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             "display": "flex", "justifyContent": "space-between",
                             "alignItems": "center", "padding": "10px 0 0",
                         }, children=[
-                            html.Span("\U0001f4c8 TREND SHA (11)", style={
+                            html.Span(f"\U0001f4c8 TREND SHA ({SHA_TREND_LENGTH})", style={
                                 "fontSize": "0.7rem", "fontWeight": "700",
                                 "color": COLORS["text_dim"], "letterSpacing": "0.5px"}),
                         ]),

@@ -785,6 +785,7 @@ def inner_loop(
                     ce_gap=ce_gap,
                     pe_gap=pe_gap,
                     idx_gap=idx_gap,
+                    market_type=market_type,
                 )
 
                 # ── Step C: Strategy evaluation ───────────────────────────
