@@ -464,7 +464,71 @@ def _get_available_chart_dates(history_data: list) -> list[str]:
     return dates[:7]
 
 
-def _build_profit_chart(history_data: list, selected_date: str | None = None) -> go.Figure:
+def _load_demo_trade_history() -> list:
+    """
+    Load append-only demo trade history and convert to profit_history
+    format so the chart can display demo trading days even when
+    profit_history.json was wiped by a day-change reset.
+
+    Each DemoTrade has: trade_id, symbol, side, qty, price,
+    product_type, timestamp, order_type (ENTRY/EXIT/PARTIAL_EXIT), pnl.
+    """
+    demo_history_file = Path("C:/Ballom_FYR/demo/demo_trade_history.json")
+    if not demo_history_file.exists():
+        return []
+    try:
+        with open(demo_history_file, "r") as f:
+            trades = json.load(f)
+    except Exception:
+        return []
+    if not isinstance(trades, list):
+        return []
+
+    # Convert demo trades to chart-compatible entries
+    entries = []
+    cumulative_pnl: dict = {}  # symbol -> running pnl
+    for t in trades:
+        sym = t.get("symbol", "")
+        ts = t.get("timestamp", "")
+        trade_date = ts[:10] if len(ts) >= 10 else ""
+        pnl = t.get("pnl", 0.0)
+        order_type = t.get("order_type", "")
+
+        if not sym or not trade_date:
+            continue
+
+        # Track cumulative P&L per symbol per day
+        day_key = f"{sym}_{trade_date}"
+        cumulative_pnl[day_key] = cumulative_pnl.get(day_key, 0.0) + pnl
+
+        if order_type == "ENTRY":
+            action = "ENTRY"
+        elif order_type in ("EXIT", "PARTIAL_EXIT"):
+            action = "CLOSE"
+        else:
+            action = "SNAPSHOT"
+
+        # Format timestamp for chart x-axis
+        display_ts = ts[:19].replace("T", " ") if "T" in ts else ts[:19]
+
+        entries.append({
+            "timestamp": display_ts,
+            "date": trade_date,
+            "symbol": sym,
+            "effective_pl": round(cumulative_pnl[day_key], 2),
+            "api_total_pl": round(cumulative_pnl[day_key], 2),
+            "booked_profit": 0.0,
+            "qty": t.get("qty", 0),
+            "action": action,
+        })
+    return entries
+
+
+def _build_profit_chart(
+    history_data: list,
+    selected_date: str | None = None,
+    mode: str = "demo",
+) -> go.Figure:
     """Build a premium Plotly line chart of effective P&L for one day."""
     empty_layout = dict(
         template="plotly_dark",
@@ -490,32 +554,60 @@ def _build_profit_chart(history_data: list, selected_date: str | None = None) ->
     chart_actions = ("SNAPSHOT", "CLOSE", "MARTINGALE", "ENTRY")
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # Use the selected date, or default to today / most recent
-    available = _get_available_chart_dates(history_data)
-    if selected_date and selected_date in available:
-        chart_date = selected_date
-    elif today in available:
+    # ── LIVE mode: today only, no date selection ──────────────────────────
+    if mode == "live":
+        today_data = [
+            e for e in history_data
+            if e.get("date") == today
+            and e.get("action") in chart_actions
+        ]
+        if not today_data:
+            fig = go.Figure()
+            fig.update_layout(**empty_layout)
+            fig.add_annotation(text="No data for today yet", showarrow=False,
+                               font=dict(size=14, color=COLORS["text_dim"]),
+                               xref="paper", yref="paper", x=0.5, y=0.5)
+            return fig
         chart_date = today
-    elif available:
-        chart_date = available[0]
+        showing_past = False
     else:
-        chart_date = None
+        # ── DEMO mode: try profit_history, fallback to demo_trade_history ─
+        # Merge demo trade history as fallback for dates missing from
+        # profit_history (which used to be wiped on day change).
+        demo_fallback = _load_demo_trade_history()
+        # Dates already covered by profit_history
+        existing_dates = {e.get("date") for e in history_data
+                          if e.get("date") and e.get("action") in chart_actions}
+        # Only add fallback entries for dates NOT already in profit_history
+        for entry in demo_fallback:
+            if entry.get("date") not in existing_dates:
+                history_data.append(entry)
 
-    if not chart_date:
-        fig = go.Figure()
-        fig.update_layout(**empty_layout)
-        fig.add_annotation(text="No data for today yet", showarrow=False,
-                           font=dict(size=14, color=COLORS["text_dim"]),
-                           xref="paper", yref="paper", x=0.5, y=0.5)
-        return fig
+        # Use the selected date, or default to today / most recent
+        available = _get_available_chart_dates(history_data)
+        if selected_date and selected_date in available:
+            chart_date = selected_date
+        elif today in available:
+            chart_date = today
+        elif available:
+            chart_date = available[0]
+        else:
+            chart_date = None
 
-    today_data = [
-        e for e in history_data
-        if e.get("date") == chart_date
-        and e.get("action") in chart_actions
-    ]
+        if not chart_date:
+            fig = go.Figure()
+            fig.update_layout(**empty_layout)
+            fig.add_annotation(text="No data for today yet", showarrow=False,
+                               font=dict(size=14, color=COLORS["text_dim"]),
+                               xref="paper", yref="paper", x=0.5, y=0.5)
+            return fig
 
-    showing_past = chart_date != today
+        today_data = [
+            e for e in history_data
+            if e.get("date") == chart_date
+            and e.get("action") in chart_actions
+        ]
+        showing_past = chart_date != today
 
     symbols: dict = {}
     for entry in today_data:
@@ -1413,26 +1505,42 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                   "#9b59b6" if daily_martingales > 0 else COLORS["text_dim"], icon="\u26a1"),
     ]
 
-    profit_fig = _build_profit_chart(history_data, selected_chart_date)
+    profit_fig = _build_profit_chart(history_data, selected_chart_date,
+                                      mode=selected_mode or ACTIVE_MODE)
 
-    # Build date dropdown options (last 7 days with data)
-    available_dates = _get_available_chart_dates(history_data)
-    today = datetime.now().strftime("%Y-%m-%d")
-    date_options = []
-    for d in available_dates:
-        if d == today:
-            label = f"Today ({d})"
-        else:
-            label = d
-        date_options.append({"label": label, "value": d})
-
-    # Keep current selection if still valid; otherwise default to first
-    if selected_chart_date and selected_chart_date in available_dates:
-        date_value = selected_chart_date
-    elif available_dates:
-        date_value = available_dates[0]
-    else:
+    # Build date dropdown options
+    current_mode = selected_mode or ACTIVE_MODE
+    if current_mode == "live":
+        # Live mode: no date selector, today only
+        date_options = []
         date_value = None
+    else:
+        # Demo mode: show last 7 days with data (including demo trade history fallback)
+        demo_fallback = _load_demo_trade_history()
+        chart_actions = ("SNAPSHOT", "CLOSE", "MARTINGALE", "ENTRY")
+        existing_dates = {e.get("date") for e in history_data
+                          if e.get("date") and e.get("action") in chart_actions}
+        merged = list(history_data)
+        for entry in demo_fallback:
+            if entry.get("date") not in existing_dates:
+                merged.append(entry)
+        available_dates = _get_available_chart_dates(merged)
+        today = datetime.now().strftime("%Y-%m-%d")
+        date_options = []
+        for d in available_dates:
+            if d == today:
+                label = f"Today ({d})"
+            else:
+                label = d
+            date_options.append({"label": label, "value": d})
+
+        # Keep current selection if still valid; otherwise default to first
+        if selected_chart_date and selected_chart_date in available_dates:
+            date_value = selected_chart_date
+        elif available_dates:
+            date_value = available_dates[0]
+        else:
+            date_value = None
 
     return (
         status_text, mode_text, f"Last updated: {last_ts}",
