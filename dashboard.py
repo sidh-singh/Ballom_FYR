@@ -819,7 +819,8 @@ app.index_string = """<!DOCTYPE html>
     #profit-date-selector .Select-input > input,
     #profit-date-selector input { color: #e8ecf4 !important; }
     #profit-date-selector .Select-menu-outer,
-    #profit-date-selector div[class*="menu"] { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
+    #profit-date-selector div[class*="menu"] { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; z-index: 99999 !important; position: absolute !important; }
+    #profit-date-selector { position: relative !important; z-index: 99999 !important; }
     #profit-date-selector .Select-option,
     #profit-date-selector div[class*="option"] { color: #e8ecf4 !important; background: transparent !important; }
     #profit-date-selector .Select-option.is-focused,
@@ -828,28 +829,33 @@ app.index_string = """<!DOCTYPE html>
     #profit-date-selector svg { fill: #a3adc4 !important; }
     /* Force the outer wrapper to also be dark */
     #profit-date-selector { background: #0f1423 !important; border-radius: 10px !important; }
-    /* Dash dropdown — dark theme for mode selector */
-    #mode-selector,
-    #mode-selector * { box-sizing: border-box; }
-    #mode-selector .Select-control,
-    #mode-selector > div { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
-    #mode-selector .Select-value-label,
-    #mode-selector .Select-placeholder,
-    #mode-selector span[class*="value"],
-    #mode-selector div[class*="singleValue"],
-    #mode-selector div[class*="SingleValue"],
-    #mode-selector div[class*="placeholder"] { color: #e8ecf4 !important; font-weight: 600 !important; font-size: 13px !important; }
-    #mode-selector .Select-input > input,
-    #mode-selector input { color: #e8ecf4 !important; }
-    #mode-selector .Select-menu-outer,
-    #mode-selector div[class*="menu"] { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
-    #mode-selector .Select-option,
-    #mode-selector div[class*="option"] { color: #e8ecf4 !important; background: transparent !important; }
-    #mode-selector .Select-option.is-focused,
-    #mode-selector div[class*="option"]:hover { background: rgba(124,108,240,0.25) !important; }
-    #mode-selector .Select-arrow { border-color: #a3adc4 transparent transparent !important; }
-    #mode-selector svg { fill: #a3adc4 !important; }
-    #mode-selector { background: #0f1423 !important; border-radius: 10px !important; }
+    /* Mode toggle switch — segmented pill */
+    #mode-selector { display: inline-flex !important; gap: 0 !important; }
+    #mode-selector .form-check { display: none !important; }
+    #mode-selector label {
+        display: inline-flex !important; align-items: center; justify-content: center;
+        padding: 7px 20px !important; margin: 0 !important;
+        font-size: 12px !important; font-weight: 700 !important;
+        letter-spacing: 1px !important; cursor: pointer;
+        border: 1px solid rgba(99,115,171,0.2) !important;
+        transition: all 0.25s ease !important;
+        color: #5a6580 !important; background: #0f1423 !important;
+    }
+    #mode-selector label:first-of-type {
+        border-radius: 10px 0 0 10px !important;
+        border-right: none !important;
+    }
+    #mode-selector label:last-of-type {
+        border-radius: 0 10px 10px 0 !important;
+        border-left: none !important;
+    }
+    /* Highlight active label — Dash wraps input inside label */
+    #mode-selector label:has(input:checked) {
+        background: linear-gradient(135deg, #7c6cf0, #00d2a0) !important;
+        color: #fff !important; border-color: transparent !important;
+        box-shadow: 0 0 14px rgba(124,108,240,0.35) !important;
+    }
+    #mode-selector input[type="radio"] { display: none !important; }
 
     /* Strategy Log — detail popup on hover / tap */
     .log-entry-wrapper {
@@ -954,6 +960,8 @@ app.layout = html.Div(
                 "backdropFilter": "blur(20px)",
                 "WebkitBackdropFilter": "blur(20px)",
                 "borderBottom": f"1px solid {COLORS['divider']}",
+                "position": "relative",
+                "zIndex": "100000",
             },
             children=[
                 # Logo
@@ -986,20 +994,30 @@ app.layout = html.Div(
                 html.Div(
                     style={"display": "flex", "alignItems": "center", "gap": "14px"},
                     children=[
-                        dcc.Dropdown(
+                        dcc.RadioItems(
                             id="mode-selector",
                             options=[
                                 {"label": "\U0001f3af DEMO", "value": "demo"},
-                                {"label": "\u26a0\ufe0f  LIVE", "value": "live"},
+                                {"label": "\u26a0\ufe0f LIVE", "value": "live"},
                             ],
-                            value=ACTIVE_MODE, clearable=False,
-                            style={
-                                "width": "160px", "fontSize": "0.85rem",
-                                "backgroundColor": COLORS["bg_secondary"],
-                                "color": COLORS["text"],
+                            value=ACTIVE_MODE,
+                            inline=True,
+                            inputStyle={"display": "none"},
+                            labelStyle={
+                                "display": "inline-flex",
+                                "alignItems": "center",
+                                "justifyContent": "center",
+                                "padding": "7px 20px",
+                                "fontSize": "12px",
+                                "fontWeight": "700",
+                                "letterSpacing": "1px",
+                                "cursor": "pointer",
+                                "color": COLORS["text_dim"],
+                                "background": COLORS["bg_secondary"],
                                 "border": f"1px solid {COLORS['card_border']}",
-                                "borderRadius": "10px",
+                                "transition": "all 0.25s ease",
                             },
+                            className="mode-toggle",
                         ),
                         html.Div(style={
                             "width": "8px", "height": "8px", "borderRadius": "50%",
