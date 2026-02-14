@@ -476,20 +476,38 @@ def _build_profit_chart(history_data: list) -> go.Figure:
                            xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
 
+    # Find the most recent day that has chart-worthy data
+    chart_actions = ("SNAPSHOT", "CLOSE", "MARTINGALE", "ENTRY")
     today = datetime.now().strftime("%Y-%m-%d")
-    today_data = [
-        e for e in history_data
-        if e.get("date") == today
-        and e.get("action") in ("SNAPSHOT", "CLOSE", "MARTINGALE")
-    ]
 
-    if not today_data:
+    # Collect all unique dates that have chart data, most recent first
+    dates_with_data = sorted(
+        {e.get("date") for e in history_data
+         if e.get("date") and e.get("action") in chart_actions},
+        reverse=True,
+    )
+
+    # Prefer today; fall back to the most recent day with data
+    chart_date = today if today in dates_with_data else (
+        dates_with_data[0] if dates_with_data else None
+    )
+
+    if not chart_date:
         fig = go.Figure()
         fig.update_layout(**empty_layout)
         fig.add_annotation(text="No data for today yet", showarrow=False,
                            font=dict(size=14, color=COLORS["text_dim"]),
                            xref="paper", yref="paper", x=0.5, y=0.5)
         return fig
+
+    today_data = [
+        e for e in history_data
+        if e.get("date") == chart_date
+        and e.get("action") in chart_actions
+    ]
+
+    # Will show a "Showing: <date>" annotation when viewing a past day
+    showing_past = chart_date != today
 
     symbols: dict = {}
     for entry in today_data:
@@ -573,6 +591,17 @@ def _build_profit_chart(history_data: list) -> go.Figure:
             ))
 
     fig.add_hline(y=0, line_dash="dot", line_color=COLORS["text_muted"], opacity=0.5)
+
+    # Show date label when displaying a past day's data
+    if showing_past:
+        fig.add_annotation(
+            text=f"Showing: {chart_date}",
+            showarrow=False,
+            font=dict(size=11, color=COLORS["accent"]),
+            xref="paper", yref="paper", x=0.0, y=1.05,
+            xanchor="left",
+        )
+
     fig.update_layout(
         **empty_layout,
         hovermode="closest",

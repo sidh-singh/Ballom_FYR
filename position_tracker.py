@@ -61,12 +61,14 @@ class PositionTracker:
         self._data: dict = self._read_json(self._tracker_file)
         self._current_date = date.today().isoformat()
 
-        # Auto-reset if data is from a previous day
+        # Auto-reset tracker data if it's from a previous day
         if self._data.get("_date") != self._current_date:
             self._data = {"_date": self._current_date}
             self._save_tracker()
-            # Clear history for the new day
-            self._write_json_atomic(self._history_file, [])
+            # Keep profit history across days (trimmed to MAX_HISTORY_ENTRIES)
+            # so the dashboard can still show yesterday's chart if today
+            # has no data yet.  Old entries are pruned in _append_history().
+            # Do NOT clear profit_history.json here.
 
     # ── atomic JSON I/O ────────────────────────────────────────────────────
 
@@ -245,11 +247,17 @@ class PositionTracker:
         return entry.get("martingale_count", 0)
 
     def reset_for_new_day(self) -> None:
-        """Reset tracking state for a new trading day."""
+        """Reset tracking state for a new trading day.
+        
+        Keeps recent profit history entries so the dashboard can still
+        display yesterday's chart.  Old entries beyond MAX_HISTORY_ENTRIES
+        are trimmed automatically by _append_history().
+        """
         self._current_date = date.today().isoformat()
         self._data = {"_date": self._current_date}
         self._save_tracker()
-        self._write_json_atomic(self._history_file, [])
+        # Do NOT wipe profit_history.json — the dashboard falls back
+        # to the most recent day with data when today has none.
 
     def reset_booked_profits(self) -> None:
         """
