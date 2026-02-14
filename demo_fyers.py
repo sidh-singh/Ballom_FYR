@@ -34,6 +34,7 @@ from fyers import Fyers
 from constants import (
     POSITION_COL, TRADE_COLS, ORDER_COLS,
     OverallPosition, Transaction,
+    estimate_trade_charges,
 )
 
 
@@ -123,6 +124,10 @@ class DemoFyers(Fyers):
         self.demo_positions: Dict[str, DemoPosition] = self._load_positions()
         self.trades: List[DemoTrade] = self._load_trades()
         self._symbol_realized: Dict[str, float] = self._load_symbol_realized()
+        # Track order count per symbol for charge estimation.
+        # Resets when position is fully closed → same cycle granularity
+        # as the real broker.
+        self._symbol_order_count: Dict[str, int] = {}
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  STORAGE HELPERS                                                         ║
@@ -310,9 +315,13 @@ class DemoFyers(Fyers):
         trade_value = ltp * qty
         key = f"{symbol}_{product_type}"
         pnl = 0.0
+        charges = 0.0
         order_type = "ENTRY"
 
         with self._lock:
+            # Track order count for charge estimation
+            self._symbol_order_count[key] = self._symbol_order_count.get(key, 0) + 1
+
             if key in self.demo_positions:
                 pos = self.demo_positions[key]
 
@@ -323,21 +332,26 @@ class DemoFyers(Fyers):
                     remaining = pos.qty - close_qty
                     order_type = "EXIT" if remaining == 0 else "PARTIAL_EXIT"
 
+                    # Estimate broker charges for the full cycle
+                    num_orders = self._symbol_order_count.get(key, 2)
+                    charges = estimate_trade_charges(close_qty, ltp, num_orders)
+
                     if remaining <= 0:
                         del self.demo_positions[key]
+                        self._symbol_order_count.pop(key, None)  # reset count
                     else:
                         pos.qty = remaining
 
-                    self.account.realized_pnl += pnl
-                    self.account.current_balance += pnl
+                    # _symbol_realized tracks GROSS P&L (matches Fyers API)
+                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
+                    # Account tracks NET P&L (realistic broker settlement)
+                    self.account.realized_pnl += (pnl - charges)
+                    self.account.current_balance += (pnl - charges)
                     self.account.utilized_margin -= pos.avg_price * close_qty
-                    if pnl > 0:
+                    if (pnl - charges) > 0:
                         self.account.winning_trades += 1
                     else:
                         self.account.losing_trades += 1
-
-                    # Track per-symbol cumulative realized for position API
-                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
 
                     leftover = qty - close_qty
                     if leftover > 0:
@@ -375,8 +389,9 @@ class DemoFyers(Fyers):
             timestamp=ts.isoformat(), order_type=order_type, pnl=pnl,
         )
         self._record_trade(trade)
-        self._log_txn("BUY", symbol, qty, ltp, pnl,
-                       f"Product={product_type} | ID={trade.trade_id}")
+        charge_note = f" | charges=₹{charges:.2f} net=₹{pnl - charges:.2f}" if charges > 0 else ""
+        self._log_txn("BUY", symbol, qty, ltp, pnl - charges,
+                       f"Product={product_type} | ID={trade.trade_id}{charge_note}")
 
         return {"s": "ok", "message": "DEMO BUY executed", "id": trade.trade_id}
 
@@ -397,9 +412,13 @@ class DemoFyers(Fyers):
 
         key = f"{symbol}_{product_type}"
         pnl = 0.0
+        charges = 0.0
         order_type = "ENTRY"
 
         with self._lock:
+            # Track order count for charge estimation
+            self._symbol_order_count[key] = self._symbol_order_count.get(key, 0) + 1
+
             if key in self.demo_positions:
                 pos = self.demo_positions[key]
 
@@ -410,21 +429,26 @@ class DemoFyers(Fyers):
                     remaining = pos.qty - close_qty
                     order_type = "EXIT" if remaining == 0 else "PARTIAL_EXIT"
 
+                    # Estimate broker charges for the full cycle
+                    num_orders = self._symbol_order_count.get(key, 2)
+                    charges = estimate_trade_charges(close_qty, ltp, num_orders)
+
                     if remaining <= 0:
                         del self.demo_positions[key]
+                        self._symbol_order_count.pop(key, None)  # reset count
                     else:
                         pos.qty = remaining
 
-                    self.account.realized_pnl += pnl
-                    self.account.current_balance += pnl
+                    # _symbol_realized tracks GROSS P&L (matches Fyers API)
+                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
+                    # Account tracks NET P&L (realistic broker settlement)
+                    self.account.realized_pnl += (pnl - charges)
+                    self.account.current_balance += (pnl - charges)
                     self.account.utilized_margin -= pos.avg_price * close_qty
-                    if pnl > 0:
+                    if (pnl - charges) > 0:
                         self.account.winning_trades += 1
                     else:
                         self.account.losing_trades += 1
-
-                    # Track per-symbol cumulative realized for position API
-                    self._symbol_realized[key] = self._symbol_realized.get(key, 0.0) + pnl
 
                     leftover = qty - close_qty
                     if leftover > 0:
@@ -464,11 +488,12 @@ class DemoFyers(Fyers):
         self._record_trade(trade)
 
         action_label = "SELL (EXIT)" if pnl != 0 else "SELL (SHORT)"
-        self._log_txn(action_label, symbol, qty, ltp, pnl,
-                       f"Product={product_type} | ID={trade.trade_id}")
+        charge_note = f" | charges=₹{charges:.2f} net=₹{pnl - charges:.2f}" if charges > 0 else ""
+        self._log_txn(action_label, symbol, qty, ltp, pnl - charges,
+                       f"Product={product_type} | ID={trade.trade_id}{charge_note}")
 
         return {"s": "ok", "message": "DEMO SELL executed",
-                "id": trade.trade_id, "pnl": pnl}
+                "id": trade.trade_id, "pnl": pnl - charges}
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  POSITION / FUNDS / CLOSE — SIMULATED                                   ║

@@ -76,6 +76,66 @@ GAP_RANGE_HIGH      = 2.0     # % — above this, signal is diverging from trend
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  COMMISSION / TAX ESTIMATION
+# ═══════════════════════════════════════════════════════════════════════════════
+# Used to buffer the hedge profit target so that NET profit (after broker
+# charges) still meets the target.
+#
+# Fyers options intraday charges:
+#   Brokerage       ₹20 per executed order (flat)
+#   STT             0.0625% of sell-side premium (options)
+#   Exchange txn    ~0.0495% per side (NSE F&O)
+#   GST             18% on (brokerage + exchange + SEBI charges)
+#   Stamp duty      ~0.003% on buy-side turnover
+#   SEBI            ₹10 per crore turnover (negligible)
+#
+# For each trade cycle, total charges ≈ ₹40-60 brokerage + proportional.
+# The strategy adds estimated charges to the hedge target so that
+# GROSS P&L at exit ≥ hedge + charges → NET P&L ≈ hedge.
+
+BROKERAGE_PER_ORDER   = 20.0      # ₹ flat per executed order
+STT_OPTIONS_RATE      = 0.000625  # 0.0625% on sell-side premium
+EXCHANGE_TXN_RATE     = 0.000495  # ~0.0495% per side (NSE F&O)
+GST_RATE              = 0.18      # 18% on (brokerage + exchange + SEBI)
+STAMP_DUTY_RATE       = 0.00003   # ~0.003% on buy-side turnover
+SEBI_PER_CRORE        = 10.0      # ₹10 per crore turnover
+
+
+def estimate_trade_charges(
+    qty: int,
+    ltp: float,
+    num_orders: int = 2,
+) -> float:
+    """
+    Estimate total broker charges for a trade cycle (₹).
+
+    Parameters
+    ──────────
+    qty         : Position quantity being closed.
+    ltp         : Last traded price of the option.
+    num_orders  : Total orders in the cycle:
+                  1 (entry) + N (martingale adds) + 1 (close) = 2 + N.
+
+    Returns
+    ───────
+    Estimated total ₹ charges (brokerage + STT + exchange + GST + stamp).
+    """
+    if qty <= 0 or ltp <= 0:
+        return 0.0
+
+    turnover = abs(qty) * ltp  # approximate per-side turnover
+
+    brokerage = BROKERAGE_PER_ORDER * num_orders
+    stt       = STT_OPTIONS_RATE * turnover                 # sell side
+    exchange  = EXCHANGE_TXN_RATE * turnover * 2            # both sides
+    sebi      = (turnover * 2 / 1_00_00_000) * SEBI_PER_CRORE
+    gst       = GST_RATE * (brokerage + exchange + sebi)
+    stamp     = STAMP_DUTY_RATE * turnover                  # buy side
+
+    return round(brokerage + stt + exchange + gst + stamp + sebi, 2)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  INNER LOOP TIMING  (near real-time: 1 second)
 # ═══════════════════════════════════════════════════════════════════════════════
 

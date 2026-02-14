@@ -851,7 +851,7 @@ def inner_loop(
                         pos_df_fresh, _ = fyers.position()
                         for _sym in (ce_symbol, pe_symbol):
                             if strategy.is_pending_close(_sym):
-                                _, _, _, fresh_pl = HeikenAshiMartingale._read_position(
+                                _, _, _, fresh_pl, _ = HeikenAshiMartingale._read_position(
                                     pos_df_fresh, _sym, "MARGIN")
                                 strategy.confirm_close(_sym, current_api_total_pl=fresh_pl)
 

@@ -27,6 +27,7 @@ from constants import (
     FIBO_SEQUENCE_LENGTH,
     GAP_RANGE_LOW,
     GAP_RANGE_HIGH,
+    estimate_trade_charges,
 )
 from state_writer import log_strategy_event
 from position_tracker import PositionTracker
@@ -185,22 +186,25 @@ class HeikenAshiMartingale:
     @staticmethod
     def _read_position(position_df, symbol: str, product_type: str = "MARGIN"):
         """
-        Return (qty, unrealized_pl, realized_pl, total_pl) for *symbol*.
+        Return (qty, unrealized_pl, realized_pl, total_pl, ltp) for *symbol*.
+
         total_pl = realized_profit + unrealized_profit from Fyers API.
+        ltp      = last traded price (used for charge estimation).
         """
         if position_df is None or position_df.empty:
-            return 0, 0.0, 0.0, 0.0
+            return 0, 0.0, 0.0, 0.0, 0.0
         row = position_df[
             (position_df["symbol"] == symbol)
             & (position_df["productType"] == product_type)
         ]
         if row.empty:
-            return 0, 0.0, 0.0, 0.0
+            return 0, 0.0, 0.0, 0.0, 0.0
         return (
             int(row["netQty"].iloc[0]),
             float(row["unrealized_profit"].iloc[0]),
             float(row["realized_profit"].iloc[0]),
             float(row["pl"].iloc[0]),
+            float(row["ltp"].iloc[0]) if "ltp" in row.columns else 0.0,
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -268,9 +272,9 @@ class HeikenAshiMartingale:
         pe_gap_pct = pe_gap_list[0]["gap_pct"] if pe_gap_list else 0.0
         idx_gap_pct = idx_gap_list[0]["gap_pct"] if idx_gap_list else 0.0
 
-        ce_qty, ce_unrealized, ce_realized, ce_total_pl = self._read_position(
+        ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
-        pe_qty, pe_unrealized, pe_realized, pe_total_pl = self._read_position(
+        pe_qty, pe_unrealized, pe_realized, pe_total_pl, pe_ltp = self._read_position(
             position_df, pe_symbol, self.PRODUCT_TYPE)
 
         # Effective P&L for the CURRENT open/close cycle:
@@ -294,6 +298,17 @@ class HeikenAshiMartingale:
         # This drives the fibonacci-scaled loss barrier: fib[level] × hedge
         ce_mg_level = self._get_martingale_count(ce_symbol)
         pe_mg_level = self._get_martingale_count(pe_symbol)
+
+        # ── Estimated charges for adjusted hedge target ───────────────
+        # The profit target must cover brokerage + STT + exchange + GST +
+        # stamp duty so that NET profit ≈ hedge.
+        #   num_orders = 1 entry + martingale adds + 1 close
+        ce_num_orders = 2 + ce_mg_level
+        pe_num_orders = 2 + pe_mg_level
+        ce_charges = estimate_trade_charges(abs(ce_qty), ce_ltp, ce_num_orders) if ce_qty != 0 else 0.0
+        pe_charges = estimate_trade_charges(abs(pe_qty), pe_ltp, pe_num_orders) if pe_qty != 0 else 0.0
+        ce_adj_hedge = hedge + ce_charges
+        pe_adj_hedge = hedge + pe_charges
 
         # Defaults — do nothing
         ce_action = OrderAction(
@@ -377,12 +392,13 @@ class HeikenAshiMartingale:
 
         elif ce_qty > 0:
             # ── exit / martingale (long CE) ──────────────────────────────
-            if ce_pl > hedge:
+            if ce_pl > ce_adj_hedge:
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
                 log_strategy_event(ce_symbol, "CE", "EXIT_PROFIT",
                                     qty=ce_qty, pl=ce_pl,
-                                    details=f"P&L {ce_pl:.2f} > target {hedge}")
+                                    details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
+                                            f" (hedge={hedge} + charges={ce_charges:.2f})")
             elif ce_list[0] == 0:
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
@@ -405,12 +421,13 @@ class HeikenAshiMartingale:
 
         elif pe_qty > 0:
             # ── exit / martingale (long PE) ──────────────────────────────
-            if pe_pl > hedge:
+            if pe_pl > pe_adj_hedge:
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
                 log_strategy_event(pe_symbol, "PE", "EXIT_PROFIT",
                                     qty=pe_qty, pl=pe_pl,
-                                    details=f"P&L {pe_pl:.2f} > target {hedge}")
+                                    details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
+                                            f" (hedge={hedge} + charges={pe_charges:.2f})")
             elif pe_list[0] == 0:
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
