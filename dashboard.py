@@ -1372,13 +1372,14 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     signal_cards = []
     if isinstance(sig_data, dict):
         # Sort: indices first, then commodities
-        # Infer from market_type field, or from ce_symbol exchange prefix (NFO=index, MCX=commodity)
+        # Infer from market_type field, or from ce_symbol exchange prefix
+        # NSE:/NFO: = index, MCX: = commodity
         def _sort_key(item):
             _sig = item[1]
             mt = _sig.get("market_type", "")
             if not mt:
                 ce_sym = _sig.get("ce_symbol", "")
-                mt = "INDEX" if ce_sym.startswith("NFO:") else "COMMODITY"
+                mt = "COMMODITY" if ce_sym.startswith("MCX:") else "INDEX"
             return (0 if mt == "INDEX" else 1, item[0])
 
         for sym_key, sig in sorted(sig_data.items(), key=_sort_key):
