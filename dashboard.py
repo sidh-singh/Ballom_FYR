@@ -805,6 +805,19 @@ app.index_string = """<!DOCTYPE html>
     .Select-menu-outer { background: #111628 !important; border-color: rgba(99,115,171,0.2) !important; border-radius: 10px !important; }
     .Select-option.is-focused { background: rgba(124,108,240,0.15) !important; }
     .Select-value-label { color: #e8ecf4 !important; }
+    /* Dash dropdown — force dark readable text on selected value */
+    #profit-date-selector .Select-value-label,
+    #profit-date-selector .Select-placeholder { color: #e8ecf4 !important; }
+    #profit-date-selector .Select-input > input { color: #e8ecf4 !important; }
+    #profit-date-selector .Select-control { background: #0f1423 !important; }
+    #profit-date-selector .Select-menu-outer { background: #0f1423 !important; }
+    #profit-date-selector .Select-option { color: #e8ecf4 !important; }
+    #profit-date-selector .Select-option.is-focused { background: rgba(124,108,240,0.25) !important; }
+    #profit-date-selector .Select-arrow { border-color: #a3adc4 transparent transparent !important; }
+    /* Also override the newer Dash dropdown markup */
+    #profit-date-selector span.Select-value-label { color: #e8ecf4 !important; font-weight: 600 !important; }
+    #profit-date-selector div[class*="singleValue"],
+    #profit-date-selector div[class*="SingleValue"] { color: #e8ecf4 !important; font-weight: 600 !important; }
 
     /* Strategy Log — detail popup on hover / tap */
     .log-entry-wrapper {
