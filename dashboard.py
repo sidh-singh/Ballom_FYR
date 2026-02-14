@@ -828,6 +828,28 @@ app.index_string = """<!DOCTYPE html>
     #profit-date-selector svg { fill: #a3adc4 !important; }
     /* Force the outer wrapper to also be dark */
     #profit-date-selector { background: #0f1423 !important; border-radius: 10px !important; }
+    /* Dash dropdown — dark theme for mode selector */
+    #mode-selector,
+    #mode-selector * { box-sizing: border-box; }
+    #mode-selector .Select-control,
+    #mode-selector > div { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
+    #mode-selector .Select-value-label,
+    #mode-selector .Select-placeholder,
+    #mode-selector span[class*="value"],
+    #mode-selector div[class*="singleValue"],
+    #mode-selector div[class*="SingleValue"],
+    #mode-selector div[class*="placeholder"] { color: #e8ecf4 !important; font-weight: 600 !important; font-size: 13px !important; }
+    #mode-selector .Select-input > input,
+    #mode-selector input { color: #e8ecf4 !important; }
+    #mode-selector .Select-menu-outer,
+    #mode-selector div[class*="menu"] { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
+    #mode-selector .Select-option,
+    #mode-selector div[class*="option"] { color: #e8ecf4 !important; background: transparent !important; }
+    #mode-selector .Select-option.is-focused,
+    #mode-selector div[class*="option"]:hover { background: rgba(124,108,240,0.25) !important; }
+    #mode-selector .Select-arrow { border-color: #a3adc4 transparent transparent !important; }
+    #mode-selector svg { fill: #a3adc4 !important; }
+    #mode-selector { background: #0f1423 !important; border-radius: 10px !important; }
 
     /* Strategy Log — detail popup on hover / tap */
     .log-entry-wrapper {
@@ -960,10 +982,25 @@ app.layout = html.Div(
                         ]),
                     ],
                 ),
-                # Center -- status badges + selector
+                # Center -- mode selector (prominent) + status badges
                 html.Div(
-                    style={"display": "flex", "alignItems": "center", "gap": "12px"},
+                    style={"display": "flex", "alignItems": "center", "gap": "14px"},
                     children=[
+                        dcc.Dropdown(
+                            id="mode-selector",
+                            options=[
+                                {"label": "\U0001f3af DEMO", "value": "demo"},
+                                {"label": "\u26a0\ufe0f  LIVE", "value": "live"},
+                            ],
+                            value=ACTIVE_MODE, clearable=False,
+                            style={
+                                "width": "160px", "fontSize": "0.85rem",
+                                "backgroundColor": COLORS["bg_secondary"],
+                                "color": COLORS["text"],
+                                "border": f"1px solid {COLORS['card_border']}",
+                                "borderRadius": "10px",
+                            },
+                        ),
                         html.Div(style={
                             "width": "8px", "height": "8px", "borderRadius": "50%",
                             "background": COLORS["positive"],
@@ -982,15 +1019,6 @@ app.layout = html.Div(
                             "fontSize": "11px", "fontWeight": "700", "letterSpacing": "1px",
                             "boxShadow": "0 0 16px rgba(255,217,61,0.25), 0 2px 8px rgba(0,0,0,0.3)",
                         }),
-                        dcc.Dropdown(
-                            id="mode-selector",
-                            options=[
-                                {"label": "\U0001f3af DEMO", "value": "demo"},
-                                {"label": "\u26a0\ufe0f  LIVE", "value": "live"},
-                            ],
-                            value=ACTIVE_MODE, clearable=False,
-                            style={"width": "140px", "fontSize": "0.82rem"},
-                        ),
                     ],
                 ),
                 # Right -- timestamp
