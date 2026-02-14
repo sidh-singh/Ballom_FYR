@@ -554,22 +554,39 @@ def _build_profit_chart(
     chart_actions = ("SNAPSHOT", "CLOSE", "MARTINGALE", "ENTRY")
     today = datetime.now().strftime("%Y-%m-%d")
 
-    # ── LIVE mode: today only, no date selection ──────────────────────────
+    # ── LIVE mode: show selected date (last 7 days supported) ───────────
     if mode == "live":
-        today_data = [
-            e for e in history_data
-            if e.get("date") == today
-            and e.get("action") in chart_actions
-        ]
-        if not today_data:
+        available = _get_available_chart_dates(history_data)
+        if selected_date and selected_date in available:
+            chart_date = selected_date
+        elif today in available:
+            chart_date = today
+        elif available:
+            chart_date = available[0]
+        else:
+            chart_date = None
+
+        if not chart_date:
             fig = go.Figure()
             fig.update_layout(**empty_layout)
             fig.add_annotation(text="No data for today yet", showarrow=False,
                                font=dict(size=14, color=COLORS["text_dim"]),
                                xref="paper", yref="paper", x=0.5, y=0.5)
             return fig
-        chart_date = today
-        showing_past = False
+
+        today_data = [
+            e for e in history_data
+            if e.get("date") == chart_date
+            and e.get("action") in chart_actions
+        ]
+        if not today_data:
+            fig = go.Figure()
+            fig.update_layout(**empty_layout)
+            fig.add_annotation(text=f"No data for {chart_date}", showarrow=False,
+                               font=dict(size=14, color=COLORS["text_dim"]),
+                               xref="paper", yref="paper", x=0.5, y=0.5)
+            return fig
+        showing_past = chart_date != today
     else:
         # ── DEMO mode: try profit_history, fallback to demo_trade_history ─
         # Merge demo trade history as fallback for dates missing from
