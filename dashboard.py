@@ -23,7 +23,7 @@ from pathlib import Path
 
 import dash
 from dash import dcc, html, dash_table
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 import plotly.graph_objects as go
 
 from constants import (
@@ -829,33 +829,53 @@ app.index_string = """<!DOCTYPE html>
     #profit-date-selector svg { fill: #a3adc4 !important; }
     /* Force the outer wrapper to also be dark */
     #profit-date-selector { background: #0f1423 !important; border-radius: 10px !important; }
-    /* Mode toggle switch — segmented pill */
-    #mode-selector { display: inline-flex !important; gap: 0 !important; }
-    #mode-selector .form-check { display: none !important; }
-    #mode-selector label {
-        display: inline-flex !important; align-items: center; justify-content: center;
-        padding: 7px 20px !important; margin: 0 !important;
-        font-size: 12px !important; font-weight: 700 !important;
-        letter-spacing: 1px !important; cursor: pointer;
-        border: 1px solid rgba(99,115,171,0.2) !important;
-        transition: all 0.25s ease !important;
-        color: #5a6580 !important; background: #0f1423 !important;
+    /* iOS-style mode toggle */
+    .mode-toggle-track {
+        position: relative;
+        width: 140px; height: 36px;
+        background: rgba(15, 20, 35, 0.9);
+        border-radius: 18px;
+        border: 1px solid rgba(99,115,171,0.15);
+        cursor: pointer;
+        display: flex; align-items: center;
+        padding: 3px;
+        transition: background 0.3s ease;
+        box-shadow: inset 0 1px 4px rgba(0,0,0,0.4);
     }
-    #mode-selector label:first-of-type {
-        border-radius: 10px 0 0 10px !important;
-        border-right: none !important;
+    .mode-toggle-track:hover {
+        border-color: rgba(124,108,240,0.3);
     }
-    #mode-selector label:last-of-type {
-        border-radius: 0 10px 10px 0 !important;
-        border-left: none !important;
+    .mode-toggle-knob {
+        position: absolute;
+        width: 66px; height: 30px;
+        border-radius: 15px;
+        transition: left 0.3s cubic-bezier(0.4, 0, 0.2, 1), background 0.3s ease;
+        top: 3px;
+        z-index: 1;
     }
-    /* Highlight active label — Dash wraps input inside label */
-    #mode-selector label:has(input:checked) {
-        background: linear-gradient(135deg, #7c6cf0, #00d2a0) !important;
-        color: #fff !important; border-color: transparent !important;
-        box-shadow: 0 0 14px rgba(124,108,240,0.35) !important;
+    .mode-toggle-knob.demo {
+        left: 3px;
+        background: linear-gradient(135deg, #7c6cf0, #6a5bd6);
+        box-shadow: 0 2px 10px rgba(124,108,240,0.4);
     }
-    #mode-selector input[type="radio"] { display: none !important; }
+    .mode-toggle-knob.live {
+        left: 71px;
+        background: linear-gradient(135deg, #ff6b6b, #e74c3c);
+        box-shadow: 0 2px 10px rgba(255,107,107,0.4);
+    }
+    .mode-toggle-label {
+        flex: 1; text-align: center;
+        font-size: 11px; font-weight: 700;
+        letter-spacing: 0.8px;
+        z-index: 2; position: relative;
+        transition: color 0.3s ease;
+        user-select: none;
+        line-height: 30px;
+    }
+    .mode-toggle-label.active { color: #fff; }
+    .mode-toggle-label.inactive { color: #5a6580; }
+    /* Hide the backing RadioItems completely */
+    #mode-selector { display: none !important; }
 
     /* Strategy Log — detail popup on hover / tap */
     .log-entry-wrapper {
@@ -994,30 +1014,28 @@ app.layout = html.Div(
                 html.Div(
                     style={"display": "flex", "alignItems": "center", "gap": "14px"},
                     children=[
+                        # iOS-style toggle
+                        html.Div(
+                            id="mode-toggle-track",
+                            className="mode-toggle-track",
+                            n_clicks=0,
+                            children=[
+                                html.Div(id="mode-toggle-knob",
+                                         className=f"mode-toggle-knob {ACTIVE_MODE}"),
+                                html.Span("DEMO", id="mode-label-demo",
+                                          className=f"mode-toggle-label {'active' if ACTIVE_MODE == 'demo' else 'inactive'}"),
+                                html.Span("LIVE", id="mode-label-live",
+                                          className=f"mode-toggle-label {'active' if ACTIVE_MODE == 'live' else 'inactive'}"),
+                            ],
+                        ),
+                        # Hidden RadioItems to keep callback contract
                         dcc.RadioItems(
                             id="mode-selector",
                             options=[
-                                {"label": "\U0001f3af DEMO", "value": "demo"},
-                                {"label": "\u26a0\ufe0f LIVE", "value": "live"},
+                                {"label": "DEMO", "value": "demo"},
+                                {"label": "LIVE", "value": "live"},
                             ],
                             value=ACTIVE_MODE,
-                            inline=True,
-                            inputStyle={"display": "none"},
-                            labelStyle={
-                                "display": "inline-flex",
-                                "alignItems": "center",
-                                "justifyContent": "center",
-                                "padding": "7px 20px",
-                                "fontSize": "12px",
-                                "fontWeight": "700",
-                                "letterSpacing": "1px",
-                                "cursor": "pointer",
-                                "color": COLORS["text_dim"],
-                                "background": COLORS["bg_secondary"],
-                                "border": f"1px solid {COLORS['card_border']}",
-                                "transition": "all 0.25s ease",
-                            },
-                            className="mode-toggle",
                         ),
                         html.Div(style={
                             "width": "8px", "height": "8px", "borderRadius": "50%",
@@ -1150,6 +1168,28 @@ app.layout = html.Div(
 # ======================================================================
 #  CALLBACKS
 # ======================================================================
+
+# Clientside callback: iOS toggle click → update hidden RadioItems + knob/labels
+app.clientside_callback(
+    """
+    function(n_clicks, current_value) {
+        if (!n_clicks) return [current_value, 'mode-toggle-knob ' + current_value,
+            current_value === 'demo' ? 'mode-toggle-label active' : 'mode-toggle-label inactive',
+            current_value === 'live' ? 'mode-toggle-label active' : 'mode-toggle-label inactive'];
+        var new_val = current_value === 'demo' ? 'live' : 'demo';
+        return [new_val, 'mode-toggle-knob ' + new_val,
+            new_val === 'demo' ? 'mode-toggle-label active' : 'mode-toggle-label inactive',
+            new_val === 'live' ? 'mode-toggle-label active' : 'mode-toggle-label inactive'];
+    }
+    """,
+    [Output("mode-selector", "value"),
+     Output("mode-toggle-knob", "className"),
+     Output("mode-label-demo", "className"),
+     Output("mode-label-live", "className")],
+    Input("mode-toggle-track", "n_clicks"),
+    [dash.dependencies.State("mode-selector", "value")],
+    prevent_initial_call=True,
+)
 
 @app.callback(
     [
@@ -1580,9 +1620,23 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     # Build date dropdown options
     current_mode = selected_mode or ACTIVE_MODE
     if current_mode == "live":
-        # Live mode: no date selector, today only
+        # Live mode: show last 7 days from profit_history
+        available_dates = _get_available_chart_dates(history_data)
+        today = datetime.now().strftime("%Y-%m-%d")
         date_options = []
-        date_value = None
+        for d in available_dates:
+            if d == today:
+                label = f"Today ({d})"
+            else:
+                label = d
+            date_options.append({"label": label, "value": d})
+
+        if selected_chart_date and selected_chart_date in available_dates:
+            date_value = selected_chart_date
+        elif available_dates:
+            date_value = available_dates[0]
+        else:
+            date_value = None
     else:
         # Demo mode: show last 7 days with data (including demo trade history fallback)
         demo_fallback = _load_demo_trade_history()
