@@ -48,10 +48,31 @@ COMMODITY_END   = dt_time(23, 55)
 #  SHA INDICATOR PARAMETERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+# Signal SHA — fast / short-term momentum indicator
 SHA_LENGTH          = 5
 SHA_MA_TYPE         = "RMA"
+
+# Trend SHA — slower / longer-term trend indicator
+SHA_TREND_LENGTH    = 11
+SHA_TREND_MA_TYPE   = "RMA"
+
 DEFAULT_TIMEFRAME   = "5"
 DEFAULT_CANDLES     = 500
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  GAP% PARAMETERS  (gap between Signal SHA and Trend SHA)
+# ═══════════════════════════════════════════════════════════════════════════════
+# GAP% = ((signal_sha_mid - trend_sha_mid) / trend_sha_mid) × 100
+# where mid = (High + Low) / 2  (mean of SHA candle)
+#
+# GAP_RANGE_LOW / GAP_RANGE_HIGH define comfortable bounds for strategy use.
+# When |GAP%| is within [LOW, HIGH] range, trend and momentum agree.
+# When |GAP%| exceeds HIGH, signal is over-extended from trend.
+# When |GAP%| is below LOW, signal is converging with trend (range-bound).
+
+GAP_RANGE_LOW       = 0.5     # % — below this, signal is too close to trend
+GAP_RANGE_HIGH      = 2.0     # % — above this, signal is diverging from trend
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

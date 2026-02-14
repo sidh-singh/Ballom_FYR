@@ -300,6 +300,48 @@ def _list_dots(lst: list, max_items: int = 7) -> html.Div:
     return html.Div(dots, style={"display": "inline-flex", "alignItems": "center"})
 
 
+def _gap_badge(label: str, gap_pct: float, color: str) -> html.Div:
+    """Compact GAP% badge for one leg (CE / PE / IDX).
+
+    Colors the value based on GAP_RANGE_LOW / GAP_RANGE_HIGH:
+        - Within range → amber/neutral
+        - Below LOW → cyan (converging)
+        - Above HIGH → red/orange (diverging)
+    """
+    from constants import GAP_RANGE_LOW, GAP_RANGE_HIGH
+
+    abs_gap = abs(gap_pct)
+    if abs_gap < GAP_RANGE_LOW:
+        gap_color = "#00bcd4"  # cyan — converging
+        gap_label = "CONVERGING"
+    elif abs_gap > GAP_RANGE_HIGH:
+        gap_color = "#e74c3c"  # red — diverging
+        gap_label = "DIVERGING"
+    else:
+        gap_color = "#f39c12"  # amber — in range
+        gap_label = "IN RANGE"
+
+    sign = "+" if gap_pct > 0 else ""
+    return html.Div(style={
+        "background": "rgba(0,0,0,0.2)",
+        "borderRadius": "8px",
+        "padding": "8px 10px",
+        "textAlign": "center",
+        "border": f"1px solid {color}33",
+    }, children=[
+        html.Div(label, style={
+            "fontSize": "0.6rem", "fontWeight": "700",
+            "color": color, "letterSpacing": "0.5px", "marginBottom": "4px"}),
+        html.Div(f"{sign}{gap_pct:.2f}%", style={
+            "fontSize": "1.1rem", "fontWeight": "800",
+            "color": gap_color, "fontFamily": "'JetBrains Mono', monospace"}),
+        html.Div(gap_label, style={
+            "fontSize": "0.5rem", "fontWeight": "600",
+            "color": gap_color, "letterSpacing": "0.5px",
+            "marginTop": "2px", "opacity": "0.8"}),
+    ])
+
+
 def _signal_row(label: str, icon: str, color: str,
                 power: int, lst: list, cross_list: list) -> html.Div:
     """One compact row for CE / PE / IDX -- 4-column grid."""
@@ -1341,6 +1383,22 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             pe_cross = pe.get("crossover", [])
             idx_cross = idx.get("crossover", [])
 
+            # Trend SHA data
+            ce_t = sig.get("ce_trend", {})
+            pe_t = sig.get("pe_trend", {})
+            idx_t = sig.get("idx_trend_sha", {})
+            ce_t_cross = ce_t.get("crossover", [])
+            pe_t_cross = pe_t.get("crossover", [])
+            idx_t_cross = idx_t.get("crossover", [])
+
+            # GAP% data
+            ce_gap_list = sig.get("ce_gap", [])
+            pe_gap_list = sig.get("pe_gap", [])
+            idx_gap_list = sig.get("idx_gap", [])
+            ce_gap_pct = ce_gap_list[0]["gap_pct"] if ce_gap_list else 0.0
+            pe_gap_pct = pe_gap_list[0]["gap_pct"] if pe_gap_list else 0.0
+            idx_gap_pct = idx_gap_list[0]["gap_pct"] if idx_gap_list else 0.0
+
             col_hdr = {"fontSize": "0.65rem", "color": COLORS["text_dim"],
                        "fontWeight": "600", "letterSpacing": "0.5px"}
             row_divider = html.Hr(style={
@@ -1375,6 +1433,7 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                                    "padding": "3px 14px", "borderRadius": "20px",
                                    "boxShadow": f"0 0 12px {trend_glow}"}),
                     ]),
+                    # ── Signal SHA section ─────────────────────────────────
                     html.Div(style={
                         "display": "grid", "gridTemplateColumns": "64px 1fr 1fr 1fr",
                         "gap": "8px", "padding": "10px 18px 0",
@@ -1394,12 +1453,63 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                         _signal_row("IDX", "\U0001f4ca", "#ffd93d",
                                     idx.get("power", 0), idx.get("list", []), idx_cross),
                     ]),
+                    # ── Trend SHA section ─────────────────────────────────
+                    html.Div(style={
+                        "padding": "0 18px",
+                        "borderTop": f"1px solid {COLORS['divider']}",
+                    }, children=[
+                        html.Div(style={
+                            "display": "flex", "justifyContent": "space-between",
+                            "alignItems": "center", "padding": "10px 0 0",
+                        }, children=[
+                            html.Span("\U0001f4c8 TREND SHA (11)", style={
+                                "fontSize": "0.7rem", "fontWeight": "700",
+                                "color": COLORS["text_dim"], "letterSpacing": "0.5px"}),
+                        ]),
+                        html.Div(style={
+                            "display": "grid", "gridTemplateColumns": "64px 1fr 1fr 1fr",
+                            "gap": "8px", "padding": "6px 0 0",
+                        }, children=[
+                            html.Span(""),
+                            html.Span("POWER", style=col_hdr),
+                            html.Span("CANDLES", style=col_hdr),
+                            html.Span("CROSSOVER", style=col_hdr),
+                        ]),
+                        html.Div(style={"padding": "0 0 10px"}, children=[
+                            _signal_row("CE", "\U0001f535", "#5dade2",
+                                        ce_t.get("power", 0), ce_t.get("list", []), ce_t_cross),
+                            row_divider,
+                            _signal_row("PE", "\U0001f534", "#ff6b6b",
+                                        pe_t.get("power", 0), pe_t.get("list", []), pe_t_cross),
+                            row_divider,
+                            _signal_row("IDX", "\U0001f4ca", "#ffd93d",
+                                        idx_t.get("power", 0), idx_t.get("list", []), idx_t_cross),
+                        ]),
+                    ]),
+                    # ── GAP% section ──────────────────────────────────────
+                    html.Div(style={
+                        "padding": "10px 18px 12px",
+                        "borderTop": f"1px solid {COLORS['divider']}",
+                    }, children=[
+                        html.Span("\U0001f4cf GAP%  (Signal vs Trend SHA)", style={
+                            "fontSize": "0.7rem", "fontWeight": "700",
+                            "color": COLORS["text_dim"], "letterSpacing": "0.5px",
+                            "display": "block", "marginBottom": "8px"}),
+                        html.Div(style={
+                            "display": "grid", "gridTemplateColumns": "1fr 1fr 1fr",
+                            "gap": "8px",
+                        }, children=[
+                            _gap_badge("CE", ce_gap_pct, "#5dade2"),
+                            _gap_badge("PE", pe_gap_pct, "#ff6b6b"),
+                            _gap_badge("IDX", idx_gap_pct, "#ffd93d"),
+                        ]),
+                    ]),
                     # SHA OHLC diagnostic tables (compare with TradingView)
                     html.Details(
                         open=False,
                         style={"padding": "0 18px 8px"},
                         children=[
-                            html.Summary("🔍 SHA Debug OHLC", style={
+                            html.Summary("\U0001f50d Signal SHA Debug OHLC", style={
                                 "fontSize": "0.65rem", "color": COLORS["text_dim"],
                                 "fontWeight": "700", "cursor": "pointer",
                                 "letterSpacing": "0.5px", "marginBottom": "6px",
@@ -1408,6 +1518,21 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             _sha_debug_table("CE", "#5dade2", ce.get("sha", [])),
                             _sha_debug_table("PE", "#ff6b6b", pe.get("sha", [])),
                             _sha_debug_table("IDX", "#ffd93d", idx.get("sha", [])),
+                        ],
+                    ),
+                    html.Details(
+                        open=False,
+                        style={"padding": "0 18px 8px"},
+                        children=[
+                            html.Summary("\U0001f50d Trend SHA Debug OHLC", style={
+                                "fontSize": "0.65rem", "color": COLORS["text_dim"],
+                                "fontWeight": "700", "cursor": "pointer",
+                                "letterSpacing": "0.5px", "marginBottom": "6px",
+                                "listStylePosition": "inside",
+                            }),
+                            _sha_debug_table("CE", "#5dade2", ce_t.get("sha", [])),
+                            _sha_debug_table("PE", "#ff6b6b", pe_t.get("sha", [])),
+                            _sha_debug_table("IDX", "#ffd93d", idx_t.get("sha", [])),
                         ],
                     ),
                     # Legend — complete reference for all signal indicators

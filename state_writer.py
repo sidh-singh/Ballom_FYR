@@ -148,14 +148,32 @@ def write_signal_state(
     ce_sha_debug: list | None = None,
     pe_sha_debug: list | None = None,
     idx_sha_debug: list | None = None,
+    # ── Trend SHA (longer period) ─────────────────────────────────────
+    ce_trend_power: int = 0,
+    ce_trend_list: list | None = None,
+    ce_trend_crossover: list | None = None,
+    pe_trend_power: int = 0,
+    pe_trend_list: list | None = None,
+    pe_trend_crossover: list | None = None,
+    idx_trend_power: int = 0,
+    idx_trend_list: list | None = None,
+    idx_trend_crossover: list | None = None,
+    ce_trend_sha_debug: list | None = None,
+    pe_trend_sha_debug: list | None = None,
+    idx_trend_sha_debug: list | None = None,
+    # ── GAP% between Signal SHA and Trend SHA ─────────────────────────
+    ce_gap: list | None = None,
+    pe_gap: list | None = None,
+    idx_gap: list | None = None,
 ) -> None:
-    """Upsert one symbol's signal data."""
+    """Upsert one symbol's signal data (signal SHA + trend SHA + GAP%)."""
     data = _read_json(SIGNAL_STATE_FILE)
     data[symbol_key] = {
         "timestamp": _ts(),
         "ce_symbol": ce_symbol,
         "pe_symbol": pe_symbol,
         "underlying": underlying,
+        # Signal SHA
         "ce": {"power": ce_power, "list": ce_list, "crossover": ce_crossover,
                "sha": ce_sha_debug or []},
         "pe": {"power": pe_power, "list": pe_list, "crossover": pe_crossover,
@@ -163,6 +181,20 @@ def write_signal_state(
         "idx": {"power": idx_power, "list": idx_list, "crossover": idx_crossover,
                 "sha": idx_sha_debug or []},
         "idx_trend": "BULLISH" if idx_list and idx_list[0] == 1 else "BEARISH",
+        # Trend SHA
+        "ce_trend": {"power": ce_trend_power, "list": ce_trend_list or [],
+                     "crossover": ce_trend_crossover or [],
+                     "sha": ce_trend_sha_debug or []},
+        "pe_trend": {"power": pe_trend_power, "list": pe_trend_list or [],
+                     "crossover": pe_trend_crossover or [],
+                     "sha": pe_trend_sha_debug or []},
+        "idx_trend_sha": {"power": idx_trend_power, "list": idx_trend_list or [],
+                          "crossover": idx_trend_crossover or [],
+                          "sha": idx_trend_sha_debug or []},
+        # GAP% between Signal and Trend SHA
+        "ce_gap": ce_gap or [],
+        "pe_gap": pe_gap or [],
+        "idx_gap": idx_gap or [],
     }
     _write_json_atomic(SIGNAL_STATE_FILE, data)
 

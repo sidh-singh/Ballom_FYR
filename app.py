@@ -49,6 +49,10 @@ from constants import (
     COMMODITY_END,
     SHA_LENGTH,
     SHA_MA_TYPE,
+    SHA_TREND_LENGTH,
+    SHA_TREND_MA_TYPE,
+    GAP_RANGE_LOW,
+    GAP_RANGE_HIGH,
     DEFAULT_TIMEFRAME,
     DEFAULT_CANDLES,
     INNER_LOOP_INTERVAL,
@@ -492,6 +496,61 @@ def get_symbol_details(
     return lt_symbol_power, lt_symbol_list, crossover, sha_debug
 
 
+def get_trend_details(
+    raw_df,
+    sha_length: int = SHA_TREND_LENGTH,
+    sha_type: str = SHA_TREND_MA_TYPE,
+):
+    """
+    Compute Trend SHA (longer-period) on *raw_df* and derive the same
+    outputs as get_symbol_details:
+        power, list, crossover, sha_debug.
+
+    Uses the same logic but with a longer SHA length (default 11)
+    for trend identification.
+    """
+    return get_symbol_details(raw_df, sha_length=sha_length, sha_type=sha_type)
+
+
+def compute_sha_gap(signal_sha_debug: list, trend_sha_debug: list) -> list:
+    """
+    Compute GAP% between Signal SHA and Trend SHA for each candle.
+
+    GAP% = ((signal_mid - trend_mid) / trend_mid) × 100
+    where mid = (High + Low) / 2
+
+    Trend SHA is the base (denominator).
+
+    Returns a list of dicts: [{gap_pct, signal_mid, trend_mid}, ...] most-recent first.
+    Aligns by index (both lists are most-recent-first).
+    """
+    gap_list = []
+    for i in range(min(len(signal_sha_debug), len(trend_sha_debug))):
+        sig = signal_sha_debug[i]
+        trd = trend_sha_debug[i]
+
+        sig_h = sig.get("H", 0)
+        sig_l = sig.get("L", 0)
+        trd_h = trd.get("H", 0)
+        trd_l = trd.get("L", 0)
+
+        sig_mid = (sig_h + sig_l) / 2
+        trd_mid = (trd_h + trd_l) / 2
+
+        if trd_mid == 0:
+            gap_pct = 0.0
+        else:
+            gap_pct = ((sig_mid - trd_mid) / trd_mid) * 100
+
+        gap_list.append({
+            "gap_pct": round(gap_pct, 4),
+            "signal_mid": round(sig_mid, 2),
+            "trend_mid": round(trd_mid, 2),
+        })
+
+    return gap_list
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  INNER LOOP — the blocking trading loop
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -661,11 +720,35 @@ def inner_loop(
                 pe_power, pe_list, pe_cross, pe_sha_dbg = get_symbol_details(pe_df)
                 idx_power, idx_list, idx_cross, idx_sha_dbg = get_symbol_details(idx_df)
 
+                # ── Step B2: Trend SHA (longer period) ────────────────────
+                ce_t_power, ce_t_list, ce_t_cross, ce_t_sha_dbg = get_trend_details(ce_df)
+                pe_t_power, pe_t_list, pe_t_cross, pe_t_sha_dbg = get_trend_details(pe_df)
+                idx_t_power, idx_t_list, idx_t_cross, idx_t_sha_dbg = get_trend_details(idx_df)
+
+                # ── Step B3: GAP% between Signal SHA and Trend SHA ────────
+                ce_gap = compute_sha_gap(ce_sha_dbg, ce_t_sha_dbg)
+                pe_gap = compute_sha_gap(pe_sha_dbg, pe_t_sha_dbg)
+                idx_gap = compute_sha_gap(idx_sha_dbg, idx_t_sha_dbg)
+
                 power_list = [
                     (ce_power, ce_list, ce_cross),
                     (pe_power, pe_list, pe_cross),
                     (idx_power, idx_list, idx_cross),
                 ]
+
+                # Trend power list (same structure, just from trend SHA)
+                trend_power_list = [
+                    (ce_t_power, ce_t_list, ce_t_cross),
+                    (pe_t_power, pe_t_list, pe_t_cross),
+                    (idx_t_power, idx_t_list, idx_t_cross),
+                ]
+
+                # GAP data for strategy (most-recent gap% per leg)
+                gap_data = {
+                    "ce_gap": ce_gap,
+                    "pe_gap": pe_gap,
+                    "idx_gap": idx_gap,
+                }
 
                 # Dump signal state to JSON for dashboard
                 write_signal_state(
@@ -685,6 +768,23 @@ def inner_loop(
                     ce_sha_debug=ce_sha_dbg,
                     pe_sha_debug=pe_sha_dbg,
                     idx_sha_debug=idx_sha_dbg,
+                    # Trend SHA data
+                    ce_trend_power=ce_t_power,
+                    ce_trend_list=ce_t_list,
+                    ce_trend_crossover=ce_t_cross,
+                    pe_trend_power=pe_t_power,
+                    pe_trend_list=pe_t_list,
+                    pe_trend_crossover=pe_t_cross,
+                    idx_trend_power=idx_t_power,
+                    idx_trend_list=idx_t_list,
+                    idx_trend_crossover=idx_t_cross,
+                    ce_trend_sha_debug=ce_t_sha_dbg,
+                    pe_trend_sha_debug=pe_t_sha_dbg,
+                    idx_trend_sha_debug=idx_t_sha_dbg,
+                    # GAP% data
+                    ce_gap=ce_gap,
+                    pe_gap=pe_gap,
+                    idx_gap=idx_gap,
                 )
 
                 # ── Step C: Strategy evaluation ───────────────────────────
@@ -697,6 +797,8 @@ def inner_loop(
                     power_list=power_list,
                     position_df=pos_df,
                     hedge=pair_hedge,
+                    trend_power_list=trend_power_list,
+                    gap_data=gap_data,
                 )
 
                 # ── Step D: Execute orders ────────────────────────────────

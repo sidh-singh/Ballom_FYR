@@ -25,6 +25,8 @@ from constants import (
     STRATEGY_HEDGE_COMMODITY,
     STRATEGY_PRODUCT_TYPE,
     FIBO_SEQUENCE_LENGTH,
+    GAP_RANGE_LOW,
+    GAP_RANGE_HIGH,
 )
 from state_writer import log_strategy_event
 from position_tracker import PositionTracker
@@ -213,6 +215,8 @@ class HeikenAshiMartingale:
         power_list: list[tuple],
         position_df,
         hedge: float = STRATEGY_HEDGE_INDEX,
+        trend_power_list: list[tuple] | None = None,
+        gap_data: dict | None = None,
     ) -> tuple[OrderAction, OrderAction]:
         """
         Determine the trading action for CE and PE legs.
@@ -227,6 +231,13 @@ class HeikenAshiMartingale:
                        (idx_power, idx_list, idx_cross)]
         position_df : DataFrame from fyers.position()
         hedge       : ₹ profit target for this pair (default: index HEDGE)
+        trend_power_list : same structure as power_list but from Trend SHA (length 11)
+                           [(ce_t_power, ce_t_list, ce_t_cross), ...]
+        gap_data    : dict with keys ce_gap, pe_gap, idx_gap — each a list of
+                      {gap_pct, signal_mid, trend_mid} dicts (most-recent first).
+                      Use gap_data["ce_gap"][0]["gap_pct"] for latest CE gap%.
+                      GAP_RANGE_LOW / GAP_RANGE_HIGH from constants.py available
+                      as class-level references for range checks.
 
         Returns
         ───────
@@ -235,6 +246,27 @@ class HeikenAshiMartingale:
         ce_power, ce_list, ce_cross = power_list[0]
         pe_power, pe_list, pe_cross = power_list[1]
         idx_power, idx_list, idx_cross = power_list[2]
+
+        # ── Trend SHA data (optional — backwards compatible) ──────────
+        if trend_power_list:
+            ce_t_power, ce_t_list, ce_t_cross = trend_power_list[0]
+            pe_t_power, pe_t_list, pe_t_cross = trend_power_list[1]
+            idx_t_power, idx_t_list, idx_t_cross = trend_power_list[2]
+        else:
+            ce_t_power = pe_t_power = idx_t_power = 0
+            ce_t_list = pe_t_list = idx_t_list = []
+            ce_t_cross = pe_t_cross = idx_t_cross = []
+
+        # ── GAP% data (optional — backwards compatible) ───────────────
+        # Latest gap %: gap_data["ce_gap"][0]["gap_pct"]
+        # Use GAP_RANGE_LOW / GAP_RANGE_HIGH for range checks.
+        _gap = gap_data or {}
+        ce_gap_list = _gap.get("ce_gap", [])
+        pe_gap_list = _gap.get("pe_gap", [])
+        idx_gap_list = _gap.get("idx_gap", [])
+        ce_gap_pct = ce_gap_list[0]["gap_pct"] if ce_gap_list else 0.0
+        pe_gap_pct = pe_gap_list[0]["gap_pct"] if pe_gap_list else 0.0
+        idx_gap_pct = idx_gap_list[0]["gap_pct"] if idx_gap_list else 0.0
 
         ce_qty, ce_unrealized, ce_realized, ce_total_pl = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
@@ -276,11 +308,14 @@ class HeikenAshiMartingale:
         )
 
         idx_trend = "BULLISH" if idx_list[0] == 1 else "BEARISH"
+        idx_trend_sha = "BULLISH" if idx_t_list and idx_t_list[0] == 1 else "BEARISH"
         log_strategy_event(
             ce_symbol.split(":")[1] if ":" in ce_symbol else ce_symbol,
             "EVAL", "ANALYSIS",
-            details=f"Idx={idx_trend} CE_cross={ce_cross[0]} PE_cross={pe_cross[0]} "
-                    f"CE_pwr={ce_power}/7 PE_pwr={pe_power}/7"
+            details=f"Idx={idx_trend} IdxTrend={idx_trend_sha} "
+                    f"CE_cross={ce_cross[0]} PE_cross={pe_cross[0]} "
+                    f"CE_pwr={ce_power}/7 PE_pwr={pe_power}/7 "
+                    f"GAP: CE={ce_gap_pct:.2f}% PE={pe_gap_pct:.2f}% IDX={idx_gap_pct:.2f}%"
                     f" | pending_close: CE={self.is_pending_close(ce_symbol)} PE={self.is_pending_close(pe_symbol)}",
         )
 
