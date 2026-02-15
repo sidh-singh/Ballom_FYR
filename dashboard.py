@@ -43,35 +43,35 @@ from constants import (
 # ======================================================================
 
 COLORS = {
-    # Backgrounds
-    "bg":             "#0a0e1a",
-    "bg_secondary":   "#0f1423",
-    "card":           "rgba(17, 22, 40, 0.85)",
-    "card_solid":     "#111628",
-    "card_border":    "rgba(99, 115, 171, 0.12)",
+    # Backgrounds — deep void black inspired by Ballom's dark aura
+    "bg":             "#050810",
+    "bg_secondary":   "#0a0f1c",
+    "card":           "rgba(12, 16, 32, 0.88)",
+    "card_solid":     "#0c1020",
+    "card_border":    "rgba(90, 60, 180, 0.14)",
     # Text
-    "text":           "#e8ecf4",
-    "text_secondary": "#a3adc4",
-    "text_dim":       "#5a6580",
-    "text_muted":     "#3d4660",
-    # Accents
-    "accent":         "#7c6cf0",
-    "accent_glow":    "rgba(124, 108, 240, 0.25)",
-    "accent_soft":    "rgba(124, 108, 240, 0.12)",
-    # Signals
-    "positive":       "#00d2a0",
-    "positive_soft":  "rgba(0, 210, 160, 0.12)",
-    "positive_glow":  "rgba(0, 210, 160, 0.3)",
-    "negative":       "#ff6b6b",
-    "negative_soft":  "rgba(255, 107, 107, 0.12)",
-    "negative_glow":  "rgba(255, 107, 107, 0.3)",
-    "warning":        "#ffd93d",
-    "neutral":        "#5a6580",
+    "text":           "#e4e8f4",
+    "text_secondary": "#9da8c4",
+    "text_dim":       "#4e5878",
+    "text_muted":     "#363f58",
+    # Accents — purple energy orbs
+    "accent":         "#7c3aed",
+    "accent_glow":    "rgba(124, 58, 237, 0.30)",
+    "accent_soft":    "rgba(124, 58, 237, 0.14)",
+    # Signals — teal wings / crimson orbs / amber heart
+    "positive":       "#00c4a0",
+    "positive_soft":  "rgba(0, 196, 160, 0.12)",
+    "positive_glow":  "rgba(0, 196, 160, 0.3)",
+    "negative":       "#ff4444",
+    "negative_soft":  "rgba(255, 68, 68, 0.14)",
+    "negative_glow":  "rgba(255, 68, 68, 0.35)",
+    "warning":        "#ff8c42",
+    "neutral":        "#4e5878",
     # UI
-    "divider":        "rgba(99, 115, 171, 0.1)",
-    "chart_grid":     "rgba(99, 115, 171, 0.08)",
-    "gradient_start": "#7c6cf0",
-    "gradient_end":   "#00d2a0",
+    "divider":        "rgba(90, 60, 180, 0.10)",
+    "chart_grid":     "rgba(90, 60, 180, 0.08)",
+    "gradient_start": "#7c3aed",
+    "gradient_end":   "#00c4a0",
 }
 
 # Legacy aliases used in callback
@@ -806,6 +806,7 @@ app = dash.Dash(
     title="Ballom FYR \u2014 Dashboard",
     update_title=None,
     suppress_callback_exceptions=True,
+    assets_folder="asset",
 )
 
 # Custom HTML with premium Google Fonts, animations, scrollbar
@@ -814,7 +815,7 @@ app.index_string = """<!DOCTYPE html>
 <head>
 {%metas%}
 <title>{%title%}</title>
-{%favicon%}
+<link rel="icon" type="image/png" href="/assets/ballom.png">
 {%css%}
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -822,7 +823,7 @@ app.index_string = """<!DOCTYPE html>
 <style>
     *, *::before, *::after { box-sizing: border-box; }
     body {
-        margin: 0; padding: 0; background: #0a0e1a;
+        margin: 0; padding: 0; background: #050810;
         font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
@@ -831,8 +832,8 @@ app.index_string = """<!DOCTYPE html>
     div._dash-loading-callback--is-loading { visibility: hidden !important; }
     ::-webkit-scrollbar { width: 6px; height: 6px; }
     ::-webkit-scrollbar-track { background: transparent; }
-    ::-webkit-scrollbar-thumb { background: rgba(124, 108, 240, 0.25); border-radius: 10px; }
-    ::-webkit-scrollbar-thumb:hover { background: rgba(124, 108, 240, 0.45); }
+    ::-webkit-scrollbar-thumb { background: rgba(124, 58, 237, 0.25); border-radius: 10px; }
+    ::-webkit-scrollbar-thumb:hover { background: rgba(124, 58, 237, 0.45); }
 
     @keyframes fadeIn {
         from { opacity: 0; transform: translateY(8px); }
@@ -849,11 +850,11 @@ app.index_string = """<!DOCTYPE html>
     .fade-in { animation: fadeIn 0.4s cubic-bezier(0.4, 0, 0.2, 1); }
     .gradient-bar {
         height: 3px;
-        background: linear-gradient(90deg, #7c6cf0, #00d2a0, #ffd93d, #ff6b6b, #7c6cf0);
+        background: linear-gradient(90deg, #7c3aed, #00c4a0, #ff8c42, #ff4444, #7c3aed);
         background-size: 300% auto;
         animation: shimmer 6s linear infinite;
     }
-    ::selection { background: rgba(124, 108, 240, 0.3); color: #e8ecf4; }
+    ::selection { background: rgba(124, 58, 237, 0.3); color: #e4e8f4; }
     .plotly .hoverlayer .hovertext { font-family: 'Inter', sans-serif !important; }
 
     .dash-spreadsheet-container .dash-spreadsheet-inner th {
@@ -862,41 +863,41 @@ app.index_string = """<!DOCTYPE html>
     .dash-spreadsheet-container .dash-spreadsheet-inner td {
         font-family: 'JetBrains Mono', monospace !important;
     }
-    .Select-control { background: #111628 !important; border-color: rgba(99,115,171,0.2) !important; border-radius: 10px !important; }
-    .Select-menu-outer { background: #111628 !important; border-color: rgba(99,115,171,0.2) !important; border-radius: 10px !important; }
-    .Select-option.is-focused { background: rgba(124,108,240,0.15) !important; }
-    .Select-value-label { color: #e8ecf4 !important; }
+    .Select-control { background: #0c1020 !important; border-color: rgba(90,60,180,0.2) !important; border-radius: 10px !important; }
+    .Select-menu-outer { background: #0c1020 !important; border-color: rgba(90,60,180,0.2) !important; border-radius: 10px !important; }
+    .Select-option.is-focused { background: rgba(124,58,237,0.15) !important; }
+    .Select-value-label { color: #e4e8f4 !important; }
     /* Dash dropdown — dark theme for date selector */
     #profit-date-selector,
     #profit-date-selector * { box-sizing: border-box; }
     #profit-date-selector .Select-control,
-    #profit-date-selector > div { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; }
+    #profit-date-selector > div { background: #0a0f1c !important; border-color: rgba(90,60,180,0.25) !important; }
     #profit-date-selector .Select-value-label,
     #profit-date-selector .Select-placeholder,
     #profit-date-selector span[class*="value"],
     #profit-date-selector div[class*="singleValue"],
     #profit-date-selector div[class*="SingleValue"],
-    #profit-date-selector div[class*="placeholder"] { color: #e8ecf4 !important; font-weight: 600 !important; font-size: 13px !important; }
+    #profit-date-selector div[class*="placeholder"] { color: #e4e8f4 !important; font-weight: 600 !important; font-size: 13px !important; }
     #profit-date-selector .Select-input > input,
-    #profit-date-selector input { color: #e8ecf4 !important; }
+    #profit-date-selector input { color: #e4e8f4 !important; }
     #profit-date-selector .Select-menu-outer,
-    #profit-date-selector div[class*="menu"] { background: #0f1423 !important; border-color: rgba(99,115,171,0.25) !important; z-index: 99999 !important; position: absolute !important; }
+    #profit-date-selector div[class*="menu"] { background: #0a0f1c !important; border-color: rgba(90,60,180,0.25) !important; z-index: 99999 !important; position: absolute !important; }
     #profit-date-selector { position: relative !important; z-index: 99999 !important; }
     #profit-date-selector .Select-option,
-    #profit-date-selector div[class*="option"] { color: #e8ecf4 !important; background: transparent !important; }
+    #profit-date-selector div[class*="option"] { color: #e4e8f4 !important; background: transparent !important; }
     #profit-date-selector .Select-option.is-focused,
-    #profit-date-selector div[class*="option"]:hover { background: rgba(124,108,240,0.25) !important; }
-    #profit-date-selector .Select-arrow { border-color: #a3adc4 transparent transparent !important; }
-    #profit-date-selector svg { fill: #a3adc4 !important; }
+    #profit-date-selector div[class*="option"]:hover { background: rgba(124,58,237,0.25) !important; }
+    #profit-date-selector .Select-arrow { border-color: #9da8c4 transparent transparent !important; }
+    #profit-date-selector svg { fill: #9da8c4 !important; }
     /* Force the outer wrapper to also be dark */
-    #profit-date-selector { background: #0f1423 !important; border-radius: 10px !important; }
+    #profit-date-selector { background: #0a0f1c !important; border-radius: 10px !important; }
     /* iOS-style mode toggle */
     .mode-toggle-track {
         position: relative;
         width: 140px; height: 36px;
-        background: rgba(15, 20, 35, 0.9);
+        background: rgba(10, 15, 28, 0.9);
         border-radius: 18px;
-        border: 1px solid rgba(99,115,171,0.15);
+        border: 1px solid rgba(90,60,180,0.15);
         cursor: pointer;
         display: flex; align-items: center;
         padding: 3px;
@@ -904,7 +905,7 @@ app.index_string = """<!DOCTYPE html>
         box-shadow: inset 0 1px 4px rgba(0,0,0,0.4);
     }
     .mode-toggle-track:hover {
-        border-color: rgba(124,108,240,0.3);
+        border-color: rgba(124,58,237,0.3);
     }
     .mode-toggle-knob {
         position: absolute;
@@ -916,13 +917,13 @@ app.index_string = """<!DOCTYPE html>
     }
     .mode-toggle-knob.demo {
         left: 3px;
-        background: linear-gradient(135deg, #7c6cf0, #6a5bd6);
-        box-shadow: 0 2px 10px rgba(124,108,240,0.4);
+        background: linear-gradient(135deg, #7c3aed, #5b21b6);
+        box-shadow: 0 2px 10px rgba(124,58,237,0.4);
     }
     .mode-toggle-knob.live {
         left: 71px;
-        background: linear-gradient(135deg, #ff6b6b, #e74c3c);
-        box-shadow: 0 2px 10px rgba(255,107,107,0.4);
+        background: linear-gradient(135deg, #ff4444, #dc2626);
+        box-shadow: 0 2px 10px rgba(255,68,68,0.4);
     }
     .mode-toggle-label {
         flex: 1; text-align: center;
@@ -934,7 +935,7 @@ app.index_string = """<!DOCTYPE html>
         line-height: 30px;
     }
     .mode-toggle-label.active { color: #fff; }
-    .mode-toggle-label.inactive { color: #5a6580; }
+    .mode-toggle-label.inactive { color: #4e5878; }
     /* Hide the backing RadioItems completely */
     #mode-selector { display: none !important; }
 
@@ -948,7 +949,7 @@ app.index_string = """<!DOCTYPE html>
     }
     .log-entry-wrapper:hover,
     .log-entry-wrapper:focus-within {
-        background: rgba(124, 108, 240, 0.06);
+        background: rgba(124, 58, 237, 0.06);
     }
     .log-detail-popup {
         display: none;
@@ -958,11 +959,11 @@ app.index_string = """<!DOCTYPE html>
         width: 100%;
         max-height: 380px;
         overflow-y: auto;
-        background: #141929;
-        border: 1px solid rgba(124, 108, 240, 0.30);
+        background: #0c1020;
+        border: 1px solid rgba(124, 58, 237, 0.30);
         border-radius: 14px;
         padding: 16px 18px;
-        box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 20px rgba(124,108,240,0.15);
+        box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 20px rgba(124,58,237,0.15);
         z-index: 9999;
         font-family: 'Inter', sans-serif;
         animation: popIn 0.18s cubic-bezier(0.4, 0, 0.2, 1);
@@ -986,28 +987,28 @@ app.index_string = """<!DOCTYPE html>
     }
     .log-detail-popup .popup-header {
         font-size: 0.72rem; font-weight: 700; letter-spacing: 1.5px;
-        color: #7c6cf0; text-transform: uppercase; margin-bottom: 10px;
-        border-bottom: 1px solid rgba(99,115,171,0.15); padding-bottom: 8px;
+        color: #7c3aed; text-transform: uppercase; margin-bottom: 10px;
+        border-bottom: 1px solid rgba(90,60,180,0.15); padding-bottom: 8px;
     }
     .log-detail-popup .popup-row {
         display: flex; justify-content: space-between; align-items: flex-start;
-        padding: 5px 0; border-bottom: 1px solid rgba(99,115,171,0.06);
+        padding: 5px 0; border-bottom: 1px solid rgba(90,60,180,0.06);
     }
     .log-detail-popup .popup-row:last-child { border-bottom: none; }
     .log-detail-popup .popup-label {
-        font-size: 0.65rem; font-weight: 600; color: #5a6580;
+        font-size: 0.65rem; font-weight: 600; color: #4e5878;
         letter-spacing: 0.5px; text-transform: uppercase; min-width: 70px;
         flex-shrink: 0;
     }
     .log-detail-popup .popup-value {
-        font-size: 0.75rem; color: #e8ecf4;
+        font-size: 0.75rem; color: #e4e8f4;
         font-family: 'JetBrains Mono', monospace;
         text-align: right; word-break: break-all; max-width: 230px;
     }
     .log-detail-popup .popup-details-block {
         margin-top: 8px; padding: 10px 12px;
-        background: rgba(10, 14, 26, 0.6); border-radius: 8px;
-        font-size: 0.7rem; color: #a3adc4; line-height: 1.55;
+        background: rgba(5, 8, 16, 0.6); border-radius: 8px;
+        font-size: 0.7rem; color: #9da8c4; line-height: 1.55;
         font-family: 'JetBrains Mono', monospace;
         word-break: break-word; white-space: pre-wrap;
     }
@@ -1037,7 +1038,7 @@ app.layout = html.Div(
             style={
                 "display": "flex", "justifyContent": "space-between",
                 "alignItems": "center", "padding": "16px 36px",
-                "background": "rgba(10, 14, 26, 0.95)",
+                "background": "rgba(5, 8, 16, 0.95)",
                 "backdropFilter": "blur(20px)",
                 "WebkitBackdropFilter": "blur(20px)",
                 "borderBottom": f"1px solid {COLORS['divider']}",
@@ -1049,9 +1050,9 @@ app.layout = html.Div(
                 html.Div(
                     style={"display": "flex", "alignItems": "center"},
                     children=[
-                        html.Div(style={
-                            "width": "36px", "height": "36px", "borderRadius": "10px",
-                            "background": f"linear-gradient(135deg, {COLORS['gradient_start']}, {COLORS['gradient_end']})",
+                        html.Img(src="/assets/ballom.png", style={
+                            "width": "40px", "height": "40px", "borderRadius": "10px",
+                            "objectFit": "cover",
                             "boxShadow": f"0 4px 18px {COLORS['accent_glow']}",
                             "marginRight": "16px",
                         }),
