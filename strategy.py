@@ -47,6 +47,8 @@ class OrderAction:
     martingale_qty: int     # fibonacci-calculated qty (only for BUY_WITH_SPECIFIC_VOLUME)
     api_total_pl: float = 0.0   # raw `pl` from Fyers API (realized + unrealized)
     position_qty: int = 0       # actual current position qty from API
+    ltp: float = 0.0            # last traded price
+    avg_price: float = 0.0      # netAvg (blended avg price)
 
     @property
     def is_actionable(self) -> bool:
@@ -88,10 +90,12 @@ class HeikenAshiMartingale:
 
     # ── pending-close helpers ──────────────────────────────────────────────
 
-    def mark_pending_close(self, symbol: str, qty: int, pl: float, api_total_pl: float) -> None:
+    def mark_pending_close(self, symbol: str, qty: int, pl: float, api_total_pl: float,
+                           ltp: float = 0.0, avg_price: float = 0.0) -> None:
         """Mark a symbol as having a pending close order."""
         self._pending_close[symbol] = {
             "qty": qty, "pl": pl, "api_total_pl": api_total_pl,
+            "ltp": ltp, "avg_price": avg_price,
         }
 
     def is_pending_close(self, symbol: str) -> bool:
@@ -126,7 +130,10 @@ class HeikenAshiMartingale:
             # and the (possibly refreshed) api_pl.  This is the TRUE profit
             # of the cycle that just closed.
             effective_pl = self.tracker.get_effective_pl(symbol, api_pl)
-            self.tracker.record_close(symbol, api_pl, info["qty"], effective_pl)
+            self.tracker.record_close(
+                symbol, api_pl, info["qty"], effective_pl,
+                ltp=info.get("ltp", 0.0), avg_price=info.get("avg_price", 0.0),
+            )
             log_strategy_event(symbol, "CLOSE", "CLOSE_CONFIRMED",
                                qty=info["qty"], pl=effective_pl,
                                details=f"Position confirmed closed — tracker updated"
@@ -194,25 +201,27 @@ class HeikenAshiMartingale:
     @staticmethod
     def _read_position(position_df, symbol: str, product_type: str = "MARGIN"):
         """
-        Return (qty, unrealized_pl, realized_pl, total_pl, ltp) for *symbol*.
+        Return (qty, unrealized_pl, realized_pl, total_pl, ltp, avg_price) for *symbol*.
 
-        total_pl = realized_profit + unrealized_profit from Fyers API.
-        ltp      = last traded price (used for charge estimation).
+        total_pl  = realized_profit + unrealized_profit from Fyers API.
+        ltp       = last traded price (used for charge estimation).
+        avg_price = netAvg from Fyers (blended average across day).
         """
         if position_df is None or position_df.empty:
-            return 0, 0.0, 0.0, 0.0, 0.0
+            return 0, 0.0, 0.0, 0.0, 0.0, 0.0
         row = position_df[
             (position_df["symbol"] == symbol)
             & (position_df["productType"] == product_type)
         ]
         if row.empty:
-            return 0, 0.0, 0.0, 0.0, 0.0
+            return 0, 0.0, 0.0, 0.0, 0.0, 0.0
         return (
             int(row["netQty"].iloc[0]),
             float(row["unrealized_profit"].iloc[0]),
             float(row["realized_profit"].iloc[0]),
             float(row["pl"].iloc[0]),
             float(row["ltp"].iloc[0]) if "ltp" in row.columns else 0.0,
+            float(row["netAvg"].iloc[0]) if "netAvg" in row.columns else 0.0,
         )
 
     # ══════════════════════════════════════════════════════════════════════════
@@ -286,9 +295,9 @@ class HeikenAshiMartingale:
         ce_gap_in_range = GAP_RANGE_LOW <= abs(ce_gap_pct) <= GAP_RANGE_HIGH
         pe_gap_in_range = GAP_RANGE_LOW <= abs(pe_gap_pct) <= GAP_RANGE_HIGH
 
-        ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp = self._read_position(
+        ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp, ce_avg = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
-        pe_qty, pe_unrealized, pe_realized, pe_total_pl, pe_ltp = self._read_position(
+        pe_qty, pe_unrealized, pe_realized, pe_total_pl, pe_ltp, pe_avg = self._read_position(
             position_df, pe_symbol, self.PRODUCT_TYPE)
 
         # Effective P&L for the CURRENT open/close cycle:
@@ -345,11 +354,13 @@ class HeikenAshiMartingale:
             symbol=ce_symbol, status=Transaction.DO_NOTHING,
             qty=base_qty, pl=ce_pl, martingale_qty=0,
             api_total_pl=ce_total_pl, position_qty=ce_qty,
+            ltp=ce_ltp, avg_price=ce_avg,
         )
         pe_action = OrderAction(
             symbol=pe_symbol, status=Transaction.DO_NOTHING,
             qty=base_qty, pl=pe_pl, martingale_qty=0,
             api_total_pl=pe_total_pl, position_qty=pe_qty,
+            ltp=pe_ltp, avg_price=pe_avg,
         )
 
         idx_trend = "BULLISH" if idx_list[0] == 1 else "BEARISH"
@@ -609,7 +620,8 @@ class HeikenAshiMartingale:
         if s == Transaction.BUY:
             resp = fyers.buy(sym, action.qty)
             if self.tracker:
-                self.tracker.record_entry(sym, action.qty, 1)
+                self.tracker.record_entry(sym, action.qty, 1,
+                                          ltp=action.ltp, avg_price=action.ltp)
             log_strategy_event(sym, label, "BUY_EXECUTED",
                                qty=action.qty, details=str(resp))
 
@@ -617,7 +629,8 @@ class HeikenAshiMartingale:
         elif s == Transaction.SELL:
             resp = fyers.sell(sym, action.qty)
             if self.tracker:
-                self.tracker.record_entry(sym, action.qty, -1)
+                self.tracker.record_entry(sym, action.qty, -1,
+                                          ltp=action.ltp, avg_price=action.ltp)
             log_strategy_event(sym, label, "SELL_EXECUTED",
                                qty=action.qty, details=str(resp))
 
@@ -630,7 +643,8 @@ class HeikenAshiMartingale:
                 # Tracker update is DEFERRED until position confirms netQty=0
                 # (handled in evaluate() next cycle via confirm_close).
                 self.mark_pending_close(
-                    sym, action.qty, action.pl, action.api_total_pl)
+                    sym, action.qty, action.pl, action.api_total_pl,
+                    ltp=action.ltp, avg_price=action.avg_price)
                 log_strategy_event(sym, label, "CLOSE_BUY_SENT",
                                    qty=action.qty, pl=action.pl,
                                    details=f"Order accepted — pending fill | {str(resp)}")
@@ -646,7 +660,8 @@ class HeikenAshiMartingale:
             order_ok = isinstance(resp, dict) and resp.get("s") == "ok"
             if order_ok:
                 self.mark_pending_close(
-                    sym, action.qty, action.pl, action.api_total_pl)
+                    sym, action.qty, action.pl, action.api_total_pl,
+                    ltp=action.ltp, avg_price=action.avg_price)
                 log_strategy_event(sym, label, "CLOSE_SELL_SENT",
                                    qty=action.qty, pl=action.pl,
                                    details=f"Order accepted — pending fill | {str(resp)}")

@@ -150,6 +150,7 @@ class PositionTracker:
 
     def record_close(
         self, symbol: str, api_total_pl: float, qty: int, effective_pl: float,
+        ltp: float = 0.0, avg_price: float = 0.0,
     ) -> None:
         """
         Called after a HEDGE close is confirmed (netQty=0).
@@ -185,9 +186,11 @@ class PositionTracker:
         self._append_history(
             symbol, effective_pl, api_total_pl,
             entry["booked_profit"], qty, "CLOSE",
+            ltp=ltp, avg_price=avg_price,
         )
 
-    def record_entry(self, symbol: str, qty: int, side: int) -> None:
+    def record_entry(self, symbol: str, qty: int, side: int,
+                     ltp: float = 0.0, avg_price: float = 0.0) -> None:
         """Called after a new position entry (BUY / SELL)."""
         entry = self._data.get(symbol)
         if not entry or not isinstance(entry, dict):
@@ -204,6 +207,7 @@ class PositionTracker:
         self._append_history(
             symbol, 0.0, 0.0,
             entry.get("booked_profit", 0.0), qty, "ENTRY",
+            ltp=ltp, avg_price=avg_price,
         )
 
     def record_martingale(
@@ -233,6 +237,7 @@ class PositionTracker:
     def log_snapshot(
         self, symbol: str, effective_pl: float,
         api_total_pl: float, qty: int,
+        ltp: float = 0.0, avg_price: float = 0.0,
     ) -> None:
         """Periodic snapshot for the dashboard profit line graph."""
         booked = 0.0
@@ -241,6 +246,7 @@ class PositionTracker:
             booked = entry.get("booked_profit", 0.0)
         self._append_history(
             symbol, effective_pl, api_total_pl, booked, qty, "SNAPSHOT",
+            ltp=ltp, avg_price=avg_price,
         )
 
     def get_cumulative_target_addend(self, symbol: str) -> float:
@@ -326,6 +332,7 @@ class PositionTracker:
     def _append_history(
         self, symbol: str, effective_pl: float, api_total_pl: float,
         booked_profit: float, qty: int, action: str,
+        ltp: float = 0.0, avg_price: float = 0.0,
     ) -> None:
         entries = self._load_history()
         entries.append({
@@ -337,6 +344,8 @@ class PositionTracker:
             "booked_profit": round(booked_profit, 2),
             "qty": qty,
             "action": action,
+            "ltp": round(ltp, 2),
+            "avg_price": round(avg_price, 2),
         })
         if len(entries) > self.MAX_HISTORY_ENTRIES:
             entries = entries[-self.MAX_HISTORY_ENTRIES:]

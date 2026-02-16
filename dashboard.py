@@ -1324,41 +1324,43 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     all_positions = pos_data.get("positions", [])
     open_positions = [p for p in all_positions if p.get("netQty", 0) != 0]
 
-    # Traded positions: built from profit_history CLOSE entries for the selected date
-    # This works for both today AND past dates selected in the chart dropdown.
+    # Traded positions: pair ENTRY → CLOSE from profit_history for the selected date
     _traded_date = selected_chart_date or datetime.now().strftime("%Y-%m-%d")
-    _close_entries = [
+    _day_entries = [
         e for e in history_data
-        if e.get("action") == "CLOSE" and e.get("date") == _traded_date
+        if e.get("date") == _traded_date and e.get("action") in ("ENTRY", "CLOSE")
     ]
-    # Build per-symbol aggregated traded rows from CLOSE entries
-    _traded_by_sym: dict = {}
-    for ce in _close_entries:
-        sym = ce.get("symbol", "")
-        if sym not in _traded_by_sym:
-            _traded_by_sym[sym] = {
-                "symbol": sym, "closes": 0, "total_booked": 0.0,
-                "last_time": "", "qty": 0,
-            }
-        _traded_by_sym[sym]["closes"] += 1
-        _traded_by_sym[sym]["total_booked"] += ce.get("effective_pl", 0.0)
-        _traded_by_sym[sym]["qty"] = ce.get("qty", 0)
-        _traded_by_sym[sym]["last_time"] = ce.get("timestamp", "")
-    traded_positions = [
-        {
-            "symbol": v["symbol"],
-            "closes": v["closes"],
-            "booked_profit": round(v["total_booked"], 2),
-            "last_close": v["last_time"],
-        }
-        for v in _traded_by_sym.values()
-    ]
+    # Build trade cycles by pairing each CLOSE with its most recent unmatched ENTRY
+    _pending_entries: dict[str, list] = {}   # symbol → [entry, ...]
+    traded_positions: list[dict] = []
+    for ev in _day_entries:
+        sym = ev.get("symbol", "")
+        if ev["action"] == "ENTRY":
+            _pending_entries.setdefault(sym, []).append(ev)
+        elif ev["action"] == "CLOSE":
+            entry_ev = None
+            if sym in _pending_entries and _pending_entries[sym]:
+                entry_ev = _pending_entries[sym].pop(0)
+            open_time = entry_ev.get("timestamp", "\u2014") if entry_ev else "\u2014"
+            entry_avg = entry_ev.get("avg_price", 0.0) if entry_ev else 0.0
+            traded_positions.append({
+                "symbol": sym,
+                "open_time": open_time,
+                "close_time": ev.get("timestamp", "\u2014"),
+                "qty": ev.get("qty", 0),
+                "avg_price": round(entry_avg, 2) if entry_avg else "\u2014",
+                "ltp": round(ev.get("ltp", 0.0), 2) or "\u2014",
+                "booked_profit": round(ev.get("effective_pl", 0.0), 2),
+            })
 
     _traded_cols_def = [
         {"name": "Symbol", "id": "symbol"},
-        {"name": "Closes", "id": "closes"},
+        {"name": "Open Time", "id": "open_time"},
+        {"name": "Close Time", "id": "close_time"},
+        {"name": "Qty", "id": "qty"},
+        {"name": "Avg Price", "id": "avg_price"},
+        {"name": "LTP", "id": "ltp"},
         {"name": "Booked P&L", "id": "booked_profit"},
-        {"name": "Last Close", "id": "last_close"},
     ]
 
     _pos_cols_def = [

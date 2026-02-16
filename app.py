@@ -815,7 +815,8 @@ def inner_loop(
                         if _act.position_qty != 0:
                             tracker.log_snapshot(
                                 _act.symbol, _act.pl,
-                                _act.api_total_pl, abs(_act.position_qty))
+                                _act.api_total_pl, abs(_act.position_qty),
+                                ltp=_act.ltp, avg_price=_act.avg_price)
 
                 # ── Step E: Position lifecycle tracking ────────────────────
                 #
