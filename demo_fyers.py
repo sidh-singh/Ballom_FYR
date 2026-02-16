@@ -128,6 +128,10 @@ class DemoFyers(Fyers):
         # Resets when position is fully closed → same cycle granularity
         # as the real broker.
         self._symbol_order_count: Dict[str, int] = {}
+        # Preserve closed positions for the dashboard "Traded Positions" table.
+        # Keyed by symbol_productType; stores position row dict with netQty=0.
+        # Resets when DemoFyers is re-instantiated (i.e. app restart).
+        self._day_closed_positions: Dict[str, dict] = {}
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  STORAGE HELPERS                                                         ║
@@ -337,6 +341,16 @@ class DemoFyers(Fyers):
                     charges = estimate_trade_charges(close_qty, ltp, num_orders)
 
                     if remaining <= 0:
+                        # Snapshot closed position for dashboard
+                        _cum_r = self._symbol_realized.get(key, 0.0) + pnl
+                        self._day_closed_positions[key] = {
+                            "symbol": symbol, "netQty": 0,
+                            "netAvg": round(pos.avg_price, 2), "ltp": round(ltp, 2),
+                            "realized_profit": round(_cum_r, 2),
+                            "unrealized_profit": 0, "productType": product_type,
+                            "pl": round(_cum_r, 2), "qty": 0, "side": 0,
+                            "buyAvg": 0, "buyQty": 0, "sellAvg": 0, "sellQty": 0,
+                        }
                         del self.demo_positions[key]
                         self._symbol_order_count.pop(key, None)  # reset count
                     else:
@@ -434,6 +448,16 @@ class DemoFyers(Fyers):
                     charges = estimate_trade_charges(close_qty, ltp, num_orders)
 
                     if remaining <= 0:
+                        # Snapshot closed position for dashboard
+                        _cum_r = self._symbol_realized.get(key, 0.0) + pnl
+                        self._day_closed_positions[key] = {
+                            "symbol": symbol, "netQty": 0,
+                            "netAvg": round(pos.avg_price, 2), "ltp": round(ltp, 2),
+                            "realized_profit": round(_cum_r, 2),
+                            "unrealized_profit": 0, "productType": product_type,
+                            "pl": round(_cum_r, 2), "qty": 0, "side": 0,
+                            "buyAvg": 0, "buyQty": 0, "sellAvg": 0, "sellQty": 0,
+                        }
                         del self.demo_positions[key]
                         self._symbol_order_count.pop(key, None)  # reset count
                     else:
@@ -552,6 +576,17 @@ class DemoFyers(Fyers):
                 "dayBuyQty": pos.qty if pos.side == 1 else 0,
                 "daySellQty": pos.qty if pos.side == -1 else 0,
             })
+
+        # Include closed positions (netQty=0) for the dashboard
+        for key, closed_row in self._day_closed_positions.items():
+            if key not in self.demo_positions:  # not re-opened
+                # Update realized_profit from latest _symbol_realized
+                _cum_r = self._symbol_realized.get(key, 0.0)
+                if isinstance(_cum_r, str):
+                    _cum_r = 0.0
+                closed_row["realized_profit"] = round(_cum_r, 2)
+                closed_row["pl"] = round(_cum_r, 2)
+                rows.append(closed_row)
 
         df = pd.DataFrame(rows, columns=POSITION_COL) if rows else pd.DataFrame(columns=POSITION_COL)
 

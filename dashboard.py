@@ -1185,6 +1185,14 @@ app.layout = html.Div(
                         html.Div(id="positions-table-container"),
                         html.Div(style={"display": "flex", "alignItems": "center",
                                         "gap": "8px", "marginTop": "28px", "marginBottom": "12px"}, children=[
+                            html.Span("\U0001f4b9", style={"fontSize": "16px"}),
+                            html.Span("Traded Positions", style={
+                                "fontSize": "15px", "fontWeight": "600",
+                                "color": COLORS["text"], "letterSpacing": "0.3px"}),
+                        ]),
+                        html.Div(id="traded-positions-container"),
+                        html.Div(style={"display": "flex", "alignItems": "center",
+                                        "gap": "8px", "marginTop": "28px", "marginBottom": "12px"}, children=[
                             html.Span("\U0001f3af", style={"fontSize": "16px"}),
                             html.Span("SHA Signal Analysis", style={
                                 "fontSize": "15px", "fontWeight": "600",
@@ -1260,6 +1268,7 @@ app.clientside_callback(
         Output("last-updated", "children"),
         Output("kpi-row", "children"),
         Output("positions-table-container", "children"),
+        Output("traded-positions-container", "children"),
         Output("signal-cards-container", "children"),
         Output("strategy-log-container", "children"),
         Output("daily-stats-row", "children"),
@@ -1311,55 +1320,100 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
         _kpi_card("Total Trades", str(total_trades), COLORS["accent"], icon="\U0001f4c8"),
     ]
 
-    # Positions table
-    positions = pos_data.get("positions", [])
-    if positions:
-        cols = ["symbol", "netQty", "netAvg", "ltp", "realized_profit", "unrealized_profit", "productType"]
-        rows = [{c: p.get(c, "") for c in cols} for p in positions]
+    # Positions table — split into open (netQty != 0) and traded/closed (netQty == 0)
+    all_positions = pos_data.get("positions", [])
+    open_positions = [p for p in all_positions if p.get("netQty", 0) != 0]
+
+    # Traded positions: built from profit_history CLOSE entries for the selected date
+    # This works for both today AND past dates selected in the chart dropdown.
+    _traded_date = selected_chart_date or datetime.now().strftime("%Y-%m-%d")
+    _close_entries = [
+        e for e in history_data
+        if e.get("action") == "CLOSE" and e.get("date") == _traded_date
+    ]
+    # Build per-symbol aggregated traded rows from CLOSE entries
+    _traded_by_sym: dict = {}
+    for ce in _close_entries:
+        sym = ce.get("symbol", "")
+        if sym not in _traded_by_sym:
+            _traded_by_sym[sym] = {
+                "symbol": sym, "closes": 0, "total_booked": 0.0,
+                "last_time": "", "qty": 0,
+            }
+        _traded_by_sym[sym]["closes"] += 1
+        _traded_by_sym[sym]["total_booked"] += ce.get("effective_pl", 0.0)
+        _traded_by_sym[sym]["qty"] = ce.get("qty", 0)
+        _traded_by_sym[sym]["last_time"] = ce.get("timestamp", "")
+    traded_positions = [
+        {
+            "symbol": v["symbol"],
+            "closes": v["closes"],
+            "booked_profit": round(v["total_booked"], 2),
+            "last_close": v["last_time"],
+        }
+        for v in _traded_by_sym.values()
+    ]
+
+    _traded_cols_def = [
+        {"name": "Symbol", "id": "symbol"},
+        {"name": "Closes", "id": "closes"},
+        {"name": "Booked P&L", "id": "booked_profit"},
+        {"name": "Last Close", "id": "last_close"},
+    ]
+
+    _pos_cols_def = [
+        {"name": "Symbol", "id": "symbol"},
+        {"name": "Qty", "id": "netQty"},
+        {"name": "Avg Price", "id": "netAvg"},
+        {"name": "LTP", "id": "ltp"},
+        {"name": "Realized P&L", "id": "realized_profit"},
+        {"name": "Unrealized P&L", "id": "unrealized_profit"},
+        {"name": "Product", "id": "productType"},
+    ]
+    _pos_table_style = {"overflowX": "auto", "borderRadius": "12px"}
+    _pos_header_style = {
+        "backgroundColor": COLORS["card_solid"],
+        "color": COLORS["text_dim"],
+        "fontWeight": "600", "border": "none",
+        "fontSize": "11px", "letterSpacing": "0.8px",
+        "textTransform": "uppercase", "padding": "12px 16px",
+        "borderBottom": f"1px solid {COLORS['divider']}",
+    }
+    _pos_cell_style = {
+        "backgroundColor": COLORS["card_solid"],
+        "color": COLORS["text"],
+        "border": f"1px solid {COLORS['divider']}",
+        "padding": "12px 16px", "fontSize": "0.85rem",
+        "fontFamily": "'JetBrains Mono', monospace",
+    }
+    _pos_cond_style = [
+        {"if": {"filter_query": "{realized_profit} > 0",
+                "column_id": "realized_profit"},
+         "color": COLORS["positive"], "fontWeight": "bold"},
+        {"if": {"filter_query": "{realized_profit} < 0",
+                "column_id": "realized_profit"},
+         "color": COLORS["negative"], "fontWeight": "bold"},
+        {"if": {"filter_query": "{unrealized_profit} > 0",
+                "column_id": "unrealized_profit"},
+         "color": COLORS["positive"], "fontWeight": "bold"},
+        {"if": {"filter_query": "{unrealized_profit} < 0",
+                "column_id": "unrealized_profit"},
+         "color": COLORS["negative"], "fontWeight": "bold"},
+        {"if": {"state": "active"},
+         "backgroundColor": COLORS["accent_soft"],
+         "border": f"1px solid {COLORS['accent']}"},
+    ]
+
+    cols = ["symbol", "netQty", "netAvg", "ltp", "realized_profit", "unrealized_profit", "productType"]
+
+    if open_positions:
+        rows = [{c: p.get(c, "") for c in cols} for p in open_positions]
         pos_table = dash_table.DataTable(
-            data=rows,
-            columns=[
-                {"name": "Symbol", "id": "symbol"},
-                {"name": "Qty", "id": "netQty"},
-                {"name": "Avg Price", "id": "netAvg"},
-                {"name": "LTP", "id": "ltp"},
-                {"name": "Realized P&L", "id": "realized_profit"},
-                {"name": "Unrealized P&L", "id": "unrealized_profit"},
-                {"name": "Product", "id": "productType"},
-            ],
-            style_table={"overflowX": "auto", "borderRadius": "12px"},
-            style_header={
-                "backgroundColor": COLORS["card_solid"],
-                "color": COLORS["text_dim"],
-                "fontWeight": "600", "border": "none",
-                "fontSize": "11px", "letterSpacing": "0.8px",
-                "textTransform": "uppercase", "padding": "12px 16px",
-                "borderBottom": f"1px solid {COLORS['divider']}",
-            },
-            style_cell={
-                "backgroundColor": COLORS["card_solid"],
-                "color": COLORS["text"],
-                "border": f"1px solid {COLORS['divider']}",
-                "padding": "12px 16px", "fontSize": "0.85rem",
-                "fontFamily": "'JetBrains Mono', monospace",
-            },
-            style_data_conditional=[
-                {"if": {"filter_query": "{realized_profit} > 0",
-                        "column_id": "realized_profit"},
-                 "color": COLORS["positive"], "fontWeight": "bold"},
-                {"if": {"filter_query": "{realized_profit} < 0",
-                        "column_id": "realized_profit"},
-                 "color": COLORS["negative"], "fontWeight": "bold"},
-                {"if": {"filter_query": "{unrealized_profit} > 0",
-                        "column_id": "unrealized_profit"},
-                 "color": COLORS["positive"], "fontWeight": "bold"},
-                {"if": {"filter_query": "{unrealized_profit} < 0",
-                        "column_id": "unrealized_profit"},
-                 "color": COLORS["negative"], "fontWeight": "bold"},
-                {"if": {"state": "active"},
-                 "backgroundColor": COLORS["accent_soft"],
-                 "border": f"1px solid {COLORS['accent']}"},
-            ],
+            data=rows, columns=_pos_cols_def,
+            style_table=_pos_table_style,
+            style_header=_pos_header_style,
+            style_cell=_pos_cell_style,
+            style_data_conditional=_pos_cond_style,
         )
         pos_table = html.Div(pos_table, style={
             **CARD_STYLE, "padding": "0", "overflow": "hidden"})
@@ -1367,6 +1421,32 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
         pos_table = html.Div(children=[
             html.Div("\U0001f4ed", style={"fontSize": "28px", "marginBottom": "8px", "opacity": "0.5"}),
             html.Div("No open positions", style={"fontSize": "13px", "color": COLORS["text_dim"]}),
+        ], style={**CARD_STYLE, "textAlign": "center", "padding": "32px"})
+
+    if traded_positions:
+        traded_table = dash_table.DataTable(
+            data=traded_positions, columns=_traded_cols_def,
+            style_table=_pos_table_style,
+            style_header=_pos_header_style,
+            style_cell=_pos_cell_style,
+            style_data_conditional=[
+                {"if": {"filter_query": "{booked_profit} > 0",
+                        "column_id": "booked_profit"},
+                 "color": COLORS["positive"], "fontWeight": "bold"},
+                {"if": {"filter_query": "{booked_profit} < 0",
+                        "column_id": "booked_profit"},
+                 "color": COLORS["negative"], "fontWeight": "bold"},
+                {"if": {"state": "active"},
+                 "backgroundColor": COLORS["accent_soft"],
+                 "border": f"1px solid {COLORS['accent']}"},
+            ],
+        )
+        traded_table = html.Div(traded_table, style={
+            **CARD_STYLE, "padding": "0", "overflow": "hidden"})
+    else:
+        traded_table = html.Div(children=[
+            html.Div("\U0001f4ed", style={"fontSize": "28px", "marginBottom": "8px", "opacity": "0.5"}),
+            html.Div(f"No traded positions for {_traded_date}", style={"fontSize": "13px", "color": COLORS["text_dim"]}),
         ], style={**CARD_STYLE, "textAlign": "center", "padding": "32px"})
 
     # Signal cards
@@ -1830,7 +1910,7 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
 
     return (
         status_text, mode_text, f"Last updated: {last_ts}",
-        kpi_cards, pos_table, signal_cards, log_entries,
+        kpi_cards, pos_table, traded_table, signal_cards, log_entries,
         daily_stats_cards, profit_fig, date_options, date_value,
     )
 
