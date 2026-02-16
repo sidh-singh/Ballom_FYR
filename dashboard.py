@@ -1353,6 +1353,8 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                 "booked_profit": round(ev.get("effective_pl", 0.0), 2),
             })
 
+    traded_positions.sort(key=lambda x: x.get("close_time", ""), reverse=True)
+
     _traded_cols_def = [
         {"name": "Symbol", "id": "symbol"},
         {"name": "Open Time", "id": "open_time"},
@@ -1428,8 +1430,9 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     if traded_positions:
         traded_table = dash_table.DataTable(
             data=traded_positions, columns=_traded_cols_def,
-            style_table=_pos_table_style,
-            style_header=_pos_header_style,
+            style_table={**_pos_table_style, "maxHeight": "260px", "overflowY": "auto"},
+            fixed_rows={"headers": True},
+            style_header={**_pos_header_style, "position": "sticky", "top": 0, "zIndex": 1},
             style_cell=_pos_cell_style,
             style_data_conditional=[
                 {"if": {"filter_query": "{booked_profit} > 0",
