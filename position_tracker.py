@@ -257,12 +257,14 @@ class PositionTracker:
             Cycle 3 target: cycle_2_profit + hedge + charges
             …
 
-        Returns 0.0 if there was no previous close (first entry).
+        Returns 0.0 if there was no previous close (first entry) or
+        if the previous cycle was a loss (adverse exit).  Only profitable
+        cycles raise the next target — losses reset to the base target.
         """
         entry = self._data.get(symbol)
         if not entry or not isinstance(entry, dict):
             return 0.0
-        return entry.get("last_cycle_profit", 0.0)
+        return max(0.0, entry.get("last_cycle_profit", 0.0))
 
     def get_martingale_count(self, symbol: str) -> int:
         """Return the number of martingale adds for *symbol* today."""
