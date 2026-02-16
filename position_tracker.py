@@ -115,6 +115,7 @@ class PositionTracker:
             "booked_profit": 0.0,
             "close_count": 0,
             "total_profit_closed": 0.0,
+            "last_cycle_profit": 0.0,
             "first_entry_time": "",
             "last_close_time": "",
             "current_qty": 0,
@@ -173,6 +174,9 @@ class PositionTracker:
         entry["total_profit_closed"] = round(
             entry.get("total_profit_closed", 0.0) + effective_pl, 2
         )
+        # Store this cycle's profit for stepped cumulative target:
+        # next re-entry target = last_cycle_profit + hedge + charges
+        entry["last_cycle_profit"] = round(max(0.0, effective_pl), 2)
         entry["last_close_time"] = self._ts()
         entry["current_qty"] = 0
         entry["current_side"] = 0
@@ -238,6 +242,22 @@ class PositionTracker:
         self._append_history(
             symbol, effective_pl, api_total_pl, booked, qty, "SNAPSHOT",
         )
+
+    def get_cumulative_target_addend(self, symbol: str) -> float:
+        """Return the last cycle's profit for stepped target calculation.
+
+        For re-entries on the same option pair within the same day,
+        the exit target includes the previous cycle's profit:
+          Position 1 target: hedge + charges
+          Position 2 target: Position 1's profit + hedge + charges
+          Position 3 target: Position 2's profit + hedge + charges
+
+        Returns 0.0 if no previous profitable close exists for this symbol.
+        """
+        entry = self._data.get(symbol)
+        if not entry or not isinstance(entry, dict):
+            return 0.0
+        return max(0.0, entry.get("last_cycle_profit", 0.0))
 
     def get_martingale_count(self, symbol: str) -> int:
         """Return the number of martingale adds for *symbol* today."""

@@ -324,6 +324,22 @@ class HeikenAshiMartingale:
         ce_adj_hedge = hedge + ce_charges
         pe_adj_hedge = hedge + pe_charges
 
+        # ── Cumulative stepped profit target for re-entries ───────────
+        # When re-entering the same option pair after a profitable close,
+        # the exit target includes the previous cycle's profit:
+        #   Position 1: hedge + charges
+        #   Position 2: Position1_profit + hedge + charges
+        #   Position 3: Position2_profit + hedge + charges
+        # This prevents closing a re-entry at the same low target when
+        # the Fyers blended averages cause effective_pl to start higher.
+        ce_prev_profit = 0.0
+        pe_prev_profit = 0.0
+        if self.tracker:
+            ce_prev_profit = self.tracker.get_cumulative_target_addend(ce_symbol)
+            pe_prev_profit = self.tracker.get_cumulative_target_addend(pe_symbol)
+            ce_adj_hedge += ce_prev_profit
+            pe_adj_hedge += pe_prev_profit
+
         # Defaults — do nothing
         ce_action = OrderAction(
             symbol=ce_symbol, status=Transaction.DO_NOTHING,
@@ -417,7 +433,8 @@ class HeikenAshiMartingale:
                 log_strategy_event(ce_symbol, "CE", "EXIT_PROFIT",
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
-                                            f" (hedge={hedge} + charges={ce_charges:.2f})")
+                                            f" (hedge={hedge} + charges={ce_charges:.2f}"
+                                            f" + prev_profit={ce_prev_profit:.2f})")
             elif (ce_t_list and ce_t_list[0] == 0) and (ce_mg_level >= 4):
                 # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
                 # → cut losses (Alcadeias-style adverse exit)
@@ -448,7 +465,8 @@ class HeikenAshiMartingale:
                 log_strategy_event(pe_symbol, "PE", "EXIT_PROFIT",
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
-                                            f" (hedge={hedge} + charges={pe_charges:.2f})")
+                                            f" (hedge={hedge} + charges={pe_charges:.2f}"
+                                            f" + prev_profit={pe_prev_profit:.2f})")
             elif (pe_t_list and pe_t_list[0] == 0) and (pe_mg_level >= 4):
                 # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
                 # → cut losses (Alcadeias-style adverse exit)
