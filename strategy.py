@@ -313,21 +313,8 @@ class HeikenAshiMartingale:
         pe_num_orders = 2 + pe_mg_level
         ce_charges = estimate_trade_charges(abs(ce_qty), ce_ltp, ce_num_orders) if ce_qty != 0 else 0.0
         pe_charges = estimate_trade_charges(abs(pe_qty), pe_ltp, pe_num_orders) if pe_qty != 0 else 0.0
-
-        # ── Cumulative (stepped) profit target ────────────────────────
-        # Each re-entry on the SAME option pair within the same day must
-        # earn progressively more before closing:
-        #   Cycle 1: target = hedge + charges
-        #   Cycle 2: target = cycle_1_profit + hedge + charges
-        #   Cycle 3: target = cycle_2_profit + hedge + charges  …
-        #
-        # The addend comes from PositionTracker.last_cycle_profit which
-        # is persisted to C:/Ballom_FYR/state/<mode>/position_tracker.json
-        # and resets at day change.
-        ce_prev_profit = self.tracker.get_cumulative_target_addend(ce_symbol) if self.tracker else 0.0
-        pe_prev_profit = self.tracker.get_cumulative_target_addend(pe_symbol) if self.tracker else 0.0
-        ce_adj_hedge = hedge + ce_charges + ce_prev_profit
-        pe_adj_hedge = hedge + pe_charges + pe_prev_profit
+        ce_adj_hedge = hedge + ce_charges
+        pe_adj_hedge = hedge + pe_charges
 
         # Defaults — do nothing
         ce_action = OrderAction(
@@ -422,8 +409,7 @@ class HeikenAshiMartingale:
                 log_strategy_event(ce_symbol, "CE", "EXIT_PROFIT",
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
-                                            f" (hedge={hedge} + charges={ce_charges:.2f}"
-                                            f" + prev_cycle={ce_prev_profit:.2f})")
+                                            f" (hedge={hedge} + charges={ce_charges:.2f})")
             elif (ce_t_list and ce_t_list[0] == 0) and (ce_mg_level >= 4):
                 # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
                 # → cut losses (Alcadeias-style adverse exit)
@@ -454,8 +440,7 @@ class HeikenAshiMartingale:
                 log_strategy_event(pe_symbol, "PE", "EXIT_PROFIT",
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
-                                            f" (hedge={hedge} + charges={pe_charges:.2f}"
-                                            f" + prev_cycle={pe_prev_profit:.2f})")
+                                            f" (hedge={hedge} + charges={pe_charges:.2f})")
             elif (pe_t_list and pe_t_list[0] == 0) and (pe_mg_level >= 4):
                 # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
                 # → cut losses (Alcadeias-style adverse exit)

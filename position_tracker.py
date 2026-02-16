@@ -120,7 +120,6 @@ class PositionTracker:
             "current_qty": 0,
             "current_side": 0,
             "martingale_count": 0,
-            "last_cycle_profit": 0.0,
         }
 
     # ═══════════════════════════════════════════════════════════════════════
@@ -177,10 +176,6 @@ class PositionTracker:
         entry["last_close_time"] = self._ts()
         entry["current_qty"] = 0
         entry["current_side"] = 0
-        # Store this cycle's effective_pl so the NEXT re-entry on the
-        # same option pair uses a stepped (cumulative) profit target:
-        #   next_target = last_cycle_profit + hedge + charges
-        entry["last_cycle_profit"] = round(effective_pl, 2)
         self._save_tracker()
 
         self._append_history(
@@ -244,28 +239,6 @@ class PositionTracker:
             symbol, effective_pl, api_total_pl, booked, qty, "SNAPSHOT",
         )
 
-    def get_cumulative_target_addend(self, symbol: str) -> float:
-        """
-        Return the profit earned by the LAST closed cycle for *symbol*.
-
-        This is added to the base hedge+charges target so that each
-        successive re-entry on the same option pair within the same day
-        must earn progressively more before closing:
-
-            Cycle 1 target: hedge + charges
-            Cycle 2 target: cycle_1_profit + hedge + charges
-            Cycle 3 target: cycle_2_profit + hedge + charges
-            …
-
-        Returns 0.0 if there was no previous close (first entry) or
-        if the previous cycle was a loss (adverse exit).  Only profitable
-        cycles raise the next target — losses reset to the base target.
-        """
-        entry = self._data.get(symbol)
-        if not entry or not isinstance(entry, dict):
-            return 0.0
-        return max(0.0, entry.get("last_cycle_profit", 0.0))
-
     def get_martingale_count(self, symbol: str) -> int:
         """Return the number of martingale adds for *symbol* today."""
         entry = self._data.get(symbol)
@@ -300,7 +273,6 @@ class PositionTracker:
             val["booked_profit"] = 0.0
             val["total_profit_closed"] = 0.0
             val["close_count"] = 0
-            val["last_cycle_profit"] = 0.0
         self._save_tracker()
 
     def get_daily_summary(self) -> dict:
