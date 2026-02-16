@@ -114,6 +114,14 @@ class HeikenAshiMartingale:
         if info and self.tracker:
             # Prefer fresh pl from the current position read
             api_pl = current_api_total_pl if current_api_total_pl is not None else info["api_total_pl"]
+            # Guard: DemoFyers deletes closed positions from its dict,
+            # so _read_position returns pl=0.0 for the deleted row.
+            # Using 0.0 as booked_profit corrupts the next cycle's
+            # effective_pl (it would include ALL prior realized profit).
+            # Fall back to the stale value captured when the close order
+            # was sent — this equals the correct cumulative pl at close.
+            if api_pl == 0.0 and info["api_total_pl"] != 0.0:
+                api_pl = info["api_total_pl"]
             # Recompute effective_pl using the tracker's current booked_profit
             # and the (possibly refreshed) api_pl.  This is the TRUE profit
             # of the cycle that just closed.
