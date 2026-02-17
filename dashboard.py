@@ -116,6 +116,7 @@ def _resolve_state_paths(mode: str) -> dict:
         "position_state":   d / "position_state.json",
         "account_state":    d / "account_state.json",
         "strategy_log":     d / "strategy_log.json",
+        "strategy_log_dir": d / "strategy_log",
         "position_tracker": d / "position_tracker.json",
         "profit_history":   d / "profit_history.json",
     }
@@ -147,6 +148,44 @@ def _read(path: Path):
             return json.load(f)
     except Exception:
         return {}
+
+
+def _read_strategy_log_for_date(paths: dict, target_date: str) -> list:
+    """Read strategy log entries for a specific date.
+
+    Tries date-partitioned file first (strategy_log/YYYY-MM-DD.json),
+    falls back to legacy strategy_log.json filtered by timestamp.
+    """
+    log_dir = paths.get("strategy_log_dir")
+    if log_dir and Path(log_dir).is_dir():
+        date_file = Path(log_dir) / f"{target_date}.json"
+        if date_file.exists():
+            data = _read(date_file)
+            return data if isinstance(data, list) else []
+
+    # Fallback: read legacy single file, filter by timestamp date
+    data = _read(paths["strategy_log"])
+    if isinstance(data, list):
+        return [e for e in data
+                if e.get("date", "").startswith(target_date)
+                or e.get("timestamp", "").startswith(target_date)]
+    return []
+
+
+def _normalize_history_dates(history_data: list) -> list:
+    """Fix history entries where the 'date' field doesn't match the timestamp.
+
+    This corrects data from before the _append_history fix, where entries
+    recorded across midnight got the wrong date.
+    """
+    for entry in history_data:
+        ts = entry.get("timestamp", "")
+        if len(ts) >= 10:
+            ts_date = ts[:10]
+            entry_date = entry.get("date", "")
+            if entry_date and entry_date != ts_date:
+                entry["date"] = ts_date
+    return history_data
 
 
 def _kpi_card(title: str, value: str, color: str = None,
@@ -1287,10 +1326,17 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     acct_data = _read(paths["account_state"])
     pos_data = _read(paths["position_state"])
     sig_data = _read(paths["signal_state"])
-    log_data = _read(paths["strategy_log"])
     tracker_data = _read(paths["position_tracker"])
     history_raw = _read(paths["profit_history"])
     history_data = history_raw if isinstance(history_raw, list) else []
+
+    # Normalize history dates: fix entries where timestamp date != date field
+    # (caused by app running across midnight before the _append_history fix)
+    history_data = _normalize_history_dates(history_data)
+
+    # Strategy log: read for the selected date (date-partitioned files)
+    _log_date = selected_chart_date or datetime.now().strftime("%Y-%m-%d")
+    log_data = _read_strategy_log_for_date(paths, _log_date)
 
     # Header badges
     status_text = app_data.get("status", "offline").upper()
@@ -1836,7 +1882,7 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     if not log_entries:
         log_entries = [html.Div(children=[
             html.Div("\U0001f4dd", style={"fontSize": "24px", "marginBottom": "8px", "opacity": "0.5"}),
-            html.Div("No strategy events yet", style={"fontSize": "13px"}),
+            html.Div(f"No strategy events for {_log_date}", style={"fontSize": "13px"}),
         ], style={"color": COLORS["text_dim"], "textAlign": "center", "padding": "32px"})]
 
     # Daily trading stats

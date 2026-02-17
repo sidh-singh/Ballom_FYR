@@ -37,10 +37,14 @@ APP_STATUS_FILE: Path     = STATE_DIR / "app_status.json"
 SIGNAL_STATE_FILE: Path   = STATE_DIR / "signal_state.json"
 POSITION_STATE_FILE: Path = STATE_DIR / "position_state.json"
 ACCOUNT_STATE_FILE: Path  = STATE_DIR / "account_state.json"
-STRATEGY_LOG_FILE: Path   = STATE_DIR / "strategy_log.json"
+STRATEGY_LOG_FILE: Path   = STATE_DIR / "strategy_log.json"      # legacy single file
+STRATEGY_LOG_DIR: Path    = STATE_DIR / "strategy_log"            # date-partitioned dir
 
-# Maximum strategy-log entries kept (FIFO)
-_MAX_LOG_ENTRIES = 200
+# Maximum strategy-log entries kept per date (FIFO)
+_MAX_LOG_ENTRIES = 500
+
+# How many days of strategy logs to retain
+_MAX_LOG_DAYS = 14
 
 
 def configure(mode: str) -> None:
@@ -50,7 +54,7 @@ def configure(mode: str) -> None:
     """
     global _mode, STATE_DIR
     global APP_STATUS_FILE, SIGNAL_STATE_FILE, POSITION_STATE_FILE
-    global ACCOUNT_STATE_FILE, STRATEGY_LOG_FILE
+    global ACCOUNT_STATE_FILE, STRATEGY_LOG_FILE, STRATEGY_LOG_DIR
 
     _mode = mode.lower()
     STATE_DIR = get_state_dir(_mode)
@@ -61,6 +65,8 @@ def configure(mode: str) -> None:
     POSITION_STATE_FILE = STATE_DIR / "position_state.json"
     ACCOUNT_STATE_FILE  = STATE_DIR / "account_state.json"
     STRATEGY_LOG_FILE   = STATE_DIR / "strategy_log.json"
+    STRATEGY_LOG_DIR    = STATE_DIR / "strategy_log"
+    STRATEGY_LOG_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def get_current_mode() -> str:
@@ -257,12 +263,23 @@ def log_strategy_event(
     pl: float = 0.0,
     details: str = "",
 ) -> None:
-    """Append a strategy decision to the rolling log (max 200 entries)."""
-    entries = _read_json(STRATEGY_LOG_FILE)
+    """Append a strategy decision to the date-partitioned log.
+
+    Logs are stored as  strategy_log/YYYY-MM-DD.json  so each trading
+    day's events are preserved independently.  Old date files beyond
+    _MAX_LOG_DAYS are pruned automatically.
+    """
+    today = datetime.now().strftime("%Y-%m-%d")
+    log_dir = STRATEGY_LOG_DIR
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_file = log_dir / f"{today}.json"
+
+    entries = _read_json(log_file)
     if not isinstance(entries, list):
         entries = []
     entries.append({
         "timestamp": _ts(),
+        "date": today,
         "symbol": symbol_key,
         "leg": leg,
         "action": action,
@@ -270,7 +287,35 @@ def log_strategy_event(
         "pl": pl,
         "details": details,
     })
-    # Keep only the last _MAX_LOG_ENTRIES
+    # Keep only the last _MAX_LOG_ENTRIES per day
     if len(entries) > _MAX_LOG_ENTRIES:
         entries = entries[-_MAX_LOG_ENTRIES:]
-    _write_json_atomic(STRATEGY_LOG_FILE, entries)
+    _write_json_atomic(log_file, entries)
+
+    # Also write to legacy single file for backward compatibility
+    legacy = _read_json(STRATEGY_LOG_FILE)
+    if not isinstance(legacy, list):
+        legacy = []
+    legacy.append(entries[-1])
+    if len(legacy) > _MAX_LOG_ENTRIES:
+        legacy = legacy[-_MAX_LOG_ENTRIES:]
+    _write_json_atomic(STRATEGY_LOG_FILE, legacy)
+
+    # Prune old date-partitioned log files
+    _cleanup_old_strategy_logs()
+
+
+def _cleanup_old_strategy_logs() -> None:
+    """Remove date-partitioned strategy log files older than _MAX_LOG_DAYS."""
+    from datetime import timedelta
+    cutoff = datetime.now() - timedelta(days=_MAX_LOG_DAYS)
+    cutoff_str = cutoff.strftime("%Y-%m-%d")
+    log_dir = STRATEGY_LOG_DIR
+    if not log_dir.exists():
+        return
+    for f in log_dir.iterdir():
+        if f.suffix == ".json" and f.stem < cutoff_str:
+            try:
+                f.unlink()
+            except Exception:
+                pass

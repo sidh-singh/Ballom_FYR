@@ -335,9 +335,12 @@ class PositionTracker:
         ltp: float = 0.0, avg_price: float = 0.0,
     ) -> None:
         entries = self._load_history()
+        # Always use the ACTUAL current date, not the cached _current_date
+        # which may be stale if the app runs across midnight.
+        actual_date = date.today().isoformat()
         entries.append({
             "timestamp": self._ts(),
-            "date": self._current_date,
+            "date": actual_date,
             "symbol": symbol,
             "effective_pl": round(effective_pl, 2),
             "api_total_pl": round(api_total_pl, 2),
