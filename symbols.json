@@ -23,15 +23,15 @@
             "enabled": true
         },
         {
-            "symbol" : "NATURALGAS",
-            "commodity": "NATURALGAS",
+            "symbol" : "SILVER",
+            "commodity": "SILVER",
             "qty_times" : 1,
-            "hedge" : 150,
+            "hedge" : 200,
             "enabled": true
         },
         {
-            "symbol" : "CRUDEOIL",
-            "commodity": "CRUDEOIL",
+            "symbol" : "GOLD",
+            "commodity": "GOLD",
             "qty_times" : 1,
             "hedge" : 200,
             "enabled": true
