@@ -1456,22 +1456,35 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             html.Div(f"No traded positions for {_traded_date}", style={"fontSize": "13px", "color": COLORS["text_dim"]}),
         ], style={**CARD_STYLE, "textAlign": "center", "padding": "32px"})
 
-    # Signal cards — only show symbols defined in symbols.json
-    _allowed_syms = set()
+    # Signal cards — show exactly the symbols defined in symbols.json
+    _allowed_idx = []
+    _allowed_com = []
     try:
         _sym_cfg = json.loads(SYMBOLS_JSON.read_text())
-        for entry in _sym_cfg.get("indices", []):
-            _allowed_syms.add(entry["symbol"])
-        for entry in _sym_cfg.get("commodities", []):
-            _allowed_syms.add(entry["symbol"])
+        _allowed_idx = [e["symbol"] for e in _sym_cfg.get("indices", [])]
+        _allowed_com = [e["symbol"] for e in _sym_cfg.get("commodities", [])
+                        if e.get("enabled", True)]
     except Exception:
-        _allowed_syms = None  # fallback: show all if file unreadable
+        pass  # fallback: show whatever is in sig_data
+
+    _allowed_syms = set(_allowed_idx + _allowed_com) if (_allowed_idx or _allowed_com) else None
 
     signal_cards = []
-    if isinstance(sig_data, dict):
-        # Filter out stale symbols not in symbols.json
-        if _allowed_syms is not None:
-            sig_data = {k: v for k, v in sig_data.items() if k in _allowed_syms}
+    if not isinstance(sig_data, dict):
+        sig_data = {}
+
+    # Filter out stale symbols not in symbols.json
+    if _allowed_syms is not None:
+        sig_data = {k: v for k, v in sig_data.items() if k in _allowed_syms}
+        # Ensure every allowed symbol has an entry (placeholder if missing)
+        for sym in _allowed_idx:
+            if sym not in sig_data:
+                sig_data[sym] = {"market_type": "INDEX"}
+        for sym in _allowed_com:
+            if sym not in sig_data:
+                sig_data[sym] = {"market_type": "COMMODITY"}
+
+    if sig_data:
         # Sort: indices first, then commodities
         # Infer from market_type field, or from ce_symbol exchange prefix
         # NSE:/NFO: = index, MCX: = commodity
