@@ -1503,6 +1503,12 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             trend_bg = "rgba(0,210,160,0.08)" if is_bull else "rgba(255,107,107,0.08)"
             trend_glow = COLORS["positive_glow"] if is_bull else COLORS["negative_glow"]
 
+            # CE/PE pair label for card title
+            _ce_sym_raw = sig.get("ce_symbol", "")
+            _pe_sym_raw = sig.get("pe_symbol", "")
+            _ce_short = _ce_sym_raw.split(":")[-1] if _ce_sym_raw else ""
+            _pe_short = _pe_sym_raw.split(":")[-1] if _pe_sym_raw else ""
+
             ce = sig.get("ce", {})
             pe = sig.get("pe", {})
             idx = sig.get("idx", {})
@@ -1556,9 +1562,21 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                         "outline": "none",
                         "userSelect": "none",
                     }, children=[
-                        html.Span(sym_key, style={
-                            "fontWeight": "700", "fontSize": "0.95rem",
-                            "color": COLORS["text"], "letterSpacing": "1px"}),
+                        html.Div(style={
+                            "display": "flex", "flexDirection": "column",
+                        }, children=[
+                            html.Span(sym_key, style={
+                                "fontWeight": "700", "fontSize": "0.95rem",
+                                "color": COLORS["text"], "letterSpacing": "1px"}),
+                            html.Span(
+                                f"CE: {_ce_short}  /  PE: {_pe_short}" if _ce_short else "Awaiting pair",
+                                style={
+                                    "fontSize": "0.6rem", "fontWeight": "500",
+                                    "color": COLORS["text_dim"],
+                                    "letterSpacing": "0.3px", "marginTop": "2px",
+                                    "fontFamily": "'JetBrains Mono', monospace",
+                                }),
+                        ]),
                         html.Span(
                             ("📈 " if is_bull else "📉 ") + idx_trend,
                             style={"color": trend_color, "fontWeight": "700",
