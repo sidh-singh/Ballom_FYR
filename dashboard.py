@@ -896,6 +896,11 @@ app.index_string = """<!DOCTYPE html>
     ::selection { background: rgba(124, 58, 237, 0.3); color: #e4e8f4; }
     .plotly .hoverlayer .hovertext { font-family: 'Inter', sans-serif !important; }
 
+    /* SHA signal cards — collapsible sections */
+    .signal-card-collapse > summary { list-style: none; }
+    .signal-card-collapse > summary::-webkit-details-marker { display: none; }
+    .signal-card-collapse > summary::marker { display: none; content: ''; }
+
     .dash-spreadsheet-container .dash-spreadsheet-inner th {
         font-family: 'Inter', sans-serif !important; letter-spacing: 0.5px !important;
     }
@@ -1551,7 +1556,9 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                 "borderTop": f"1px solid {COLORS['divider']}",
                 "margin": "0"})
 
-            card = html.Div(
+            card = html.Details(
+                open=True,
+                className="signal-card-collapse",
                 style={
                     "background": COLORS["card_solid"],
                     "borderRadius": "14px", "marginBottom": "16px",
@@ -1561,11 +1568,16 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                     "transition": "all 0.3s ease",
                 },
                 children=[
-                    html.Div(style={
+                    html.Summary(style={
                         "display": "flex", "justifyContent": "space-between",
                         "alignItems": "center", "padding": "12px 18px",
                         "background": trend_bg,
                         "borderBottom": f"2px solid {trend_color}",
+                        "cursor": "pointer",
+                        "listStyle": "none",
+                        "WebkitAppearance": "none",
+                        "outline": "none",
+                        "userSelect": "none",
                     }, children=[
                         html.Span(sym_key, style={
                             "fontWeight": "700", "fontSize": "0.95rem",
