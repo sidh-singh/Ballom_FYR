@@ -154,6 +154,7 @@ STRATEGY_HEDGE_COMMODITY  = 200    # ₹ profit target for commodity option pair
 #                                     brokerage eats ~48% of a ₹100 target at qty=1)
 STRATEGY_PRODUCT_TYPE     = "MARGIN"
 FIBO_SEQUENCE_LENGTH      = 25     # Length of fibonacci sequence for martingale
+MAX_MARTINGALE_LEVEL      = 3      # Hard cap: max martingale adds (0=entry only, 3=4 tranches total)
 
 # Martingale threshold formula (SQUARED FIBONACCI):
 #   threshold[level] = fibonacci[level]² × HEDGE

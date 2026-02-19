@@ -25,6 +25,7 @@ from constants import (
     STRATEGY_HEDGE_COMMODITY,
     STRATEGY_PRODUCT_TYPE,
     FIBO_SEQUENCE_LENGTH,
+    MAX_MARTINGALE_LEVEL,
     GAP_RANGE_LOW,
     GAP_RANGE_HIGH,
     estimate_trade_charges,
@@ -446,14 +447,22 @@ class HeikenAshiMartingale:
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={ce_charges:.2f}"
                                             f" + prev_profit={ce_prev_profit:.2f})")
-            elif (ce_t_list and ce_t_list[0] == 0) and (ce_mg_level >= 4):
-                # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
-                # → cut losses (Alcadeias-style adverse exit)
+            elif ce_mg_level >= MAX_MARTINGALE_LEVEL:
+                # HARD CAP — max martingale level reached, force close
+                # to prevent unbounded capital exposure
+                ce_action.status = Transaction.CLOSE_BUY
+                ce_action.qty = ce_qty
+                log_strategy_event(ce_symbol, "CE", "EXIT_HARD_CAP",
+                                    qty=ce_qty, pl=ce_pl,
+                                    details=f"mg_level={ce_mg_level} >= MAX={MAX_MARTINGALE_LEVEL}")
+            elif (ce_t_list and ce_t_list[0] == 0) and (ce_mg_level >= 2):
+                # Trend SHA flipped bearish + 2+ martingale adds
+                # → cut losses early (Alcadeias-style adverse exit)
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
                 log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
                                     qty=ce_qty, pl=ce_pl,
-                                    details=f"Trend SHA bearish + mg_level={ce_mg_level} (>=4)")
+                                    details=f"Trend SHA bearish + mg_level={ce_mg_level} (>=2)")
             elif ce_pl < -self._fibo_threshold(ce_mg_level, hedge):
                 thr = self._fibo_threshold(ce_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
@@ -478,14 +487,22 @@ class HeikenAshiMartingale:
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={pe_charges:.2f}"
                                             f" + prev_profit={pe_prev_profit:.2f})")
-            elif (pe_t_list and pe_t_list[0] == 0) and (pe_mg_level >= 4):
-                # Trend SHA flipped bearish + deeply martingaled (5+ tranches)
-                # → cut losses (Alcadeias-style adverse exit)
+            elif pe_mg_level >= MAX_MARTINGALE_LEVEL:
+                # HARD CAP — max martingale level reached, force close
+                # to prevent unbounded capital exposure
+                pe_action.status = Transaction.CLOSE_BUY
+                pe_action.qty = pe_qty
+                log_strategy_event(pe_symbol, "PE", "EXIT_HARD_CAP",
+                                    qty=pe_qty, pl=pe_pl,
+                                    details=f"mg_level={pe_mg_level} >= MAX={MAX_MARTINGALE_LEVEL}")
+            elif (pe_t_list and pe_t_list[0] == 0) and (pe_mg_level >= 2):
+                # Trend SHA flipped bearish + 2+ martingale adds
+                # → cut losses early (Alcadeias-style adverse exit)
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
                 log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
                                     qty=pe_qty, pl=pe_pl,
-                                    details=f"Trend SHA bearish + mg_level={pe_mg_level} (>=4)")
+                                    details=f"Trend SHA bearish + mg_level={pe_mg_level} (>=2)")
             elif pe_pl < -self._fibo_threshold(pe_mg_level, hedge):
                 thr = self._fibo_threshold(pe_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)
@@ -673,6 +690,12 @@ class HeikenAshiMartingale:
         # ── BUY_WITH_SPECIFIC_VOLUME (martingale add long) ────────────────
         #    qty increases along the fibonacci series (computed by evaluate)
         elif s == Transaction.BUY_WITH_SPECIFIC_VOLUME:
+            # Safety guard: block martingale if already at hard cap
+            current_mg = self.tracker.get_martingale_count(sym) if self.tracker else 0
+            if current_mg >= MAX_MARTINGALE_LEVEL:
+                log_strategy_event(sym, label, "MARTINGALE_BLOCKED",
+                                   details=f"mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL} — blocked")
+                return
             fibo_qty = action.martingale_qty
             resp = fyers.buy(sym, fibo_qty)
             if self.tracker:
@@ -686,6 +709,12 @@ class HeikenAshiMartingale:
         # ── SELL_WITH_SPECIFIC_VOLUME (martingale add short) ──────────────
         #    qty increases along the fibonacci series (computed by evaluate)
         elif s == Transaction.SELL_WITH_SPECIFIC_VOLUME:
+            # Safety guard: block martingale if already at hard cap
+            current_mg = self.tracker.get_martingale_count(sym) if self.tracker else 0
+            if current_mg >= MAX_MARTINGALE_LEVEL:
+                log_strategy_event(sym, label, "MARTINGALE_BLOCKED",
+                                   details=f"mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL} — blocked")
+                return
             fibo_qty = action.martingale_qty
             resp = fyers.sell(sym, fibo_qty)
             if self.tracker:
