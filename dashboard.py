@@ -34,6 +34,7 @@ from constants import (
     DASHBOARD_REFRESH_MS,
     SHA_LENGTH,
     SHA_TREND_LENGTH,
+    SYMBOLS_JSON,
     get_state_dir,
 )
 
@@ -1455,9 +1456,22 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             html.Div(f"No traded positions for {_traded_date}", style={"fontSize": "13px", "color": COLORS["text_dim"]}),
         ], style={**CARD_STYLE, "textAlign": "center", "padding": "32px"})
 
-    # Signal cards
+    # Signal cards — only show symbols defined in symbols.json
+    _allowed_syms = set()
+    try:
+        _sym_cfg = json.loads(SYMBOLS_JSON.read_text())
+        for entry in _sym_cfg.get("indices", []):
+            _allowed_syms.add(entry["symbol"])
+        for entry in _sym_cfg.get("commodities", []):
+            _allowed_syms.add(entry["symbol"])
+    except Exception:
+        _allowed_syms = None  # fallback: show all if file unreadable
+
     signal_cards = []
     if isinstance(sig_data, dict):
+        # Filter out stale symbols not in symbols.json
+        if _allowed_syms is not None:
+            sig_data = {k: v for k, v in sig_data.items() if k in _allowed_syms}
         # Sort: indices first, then commodities
         # Infer from market_type field, or from ce_symbol exchange prefix
         # NSE:/NFO: = index, MCX: = commodity
