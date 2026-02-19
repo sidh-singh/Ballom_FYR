@@ -574,6 +574,42 @@ class HeikenAshiMartingale:
         return True, total_utilized
 
     # ══════════════════════════════════════════════════════════════════════════
+    #  FORCE-CLOSE — fallback when martingale is blocked
+    # ══════════════════════════════════════════════════════════════════════════
+
+    def _force_close(self, fyers, action: OrderAction, label: str, reason: str) -> None:
+        """
+        Close the existing position when martingale add is blocked
+        (by balance limit or hard cap).  First priority: stop the bleeding.
+
+        Works for both demo and live accounts.
+        """
+        qty = action.position_qty or action.qty
+        if qty == 0:
+            log_strategy_event(action.symbol, label, "FORCE_CLOSE_SKIP",
+                               details=f"No position to close | {reason}")
+            return
+
+        # Determine close direction: long position → sell, short → buy
+        if qty > 0:
+            resp = fyers.sell(action.symbol, abs(qty))
+        else:
+            resp = fyers.buy(action.symbol, abs(qty))
+
+        order_ok = isinstance(resp, dict) and resp.get("s") == "ok"
+        if order_ok:
+            self.mark_pending_close(
+                action.symbol, abs(qty), action.pl, action.api_total_pl,
+                ltp=action.ltp, avg_price=action.avg_price)
+            log_strategy_event(action.symbol, label, "FORCE_CLOSE_SENT",
+                               qty=abs(qty), pl=action.pl,
+                               details=f"Position closed — {reason} | {str(resp)}")
+        else:
+            log_strategy_event(action.symbol, label, "FORCE_CLOSE_REJECTED",
+                               qty=abs(qty), pl=action.pl,
+                               details=f"Close REJECTED — will retry | {reason} | {str(resp)}")
+
+    # ══════════════════════════════════════════════════════════════════════════
     #  EXECUTE ORDERS — side-effect: calls fyers.buy() / fyers.sell()
     #
     #  Balance-limit and fibonacci qty escalation (from app_fyers_strategy)
@@ -624,6 +660,10 @@ class HeikenAshiMartingale:
             Transaction.BUY_WITH_SPECIFIC_VOLUME,
             Transaction.SELL_WITH_SPECIFIC_VOLUME,
         )
+        martingale_types = (
+            Transaction.BUY_WITH_SPECIFIC_VOLUME,
+            Transaction.SELL_WITH_SPECIFIC_VOLUME,
+        )
         if s in entry_types:
             can_trade, utilized = self._check_balance_limit(fyers, s)
             if not can_trade:
@@ -631,6 +671,11 @@ class HeikenAshiMartingale:
                     sym, label, "BALANCE_BLOCKED",
                     details=f"{s.name} blocked — utilized ₹{utilized:,.2f} >= limit ₹{self.max_balance_usage:,.2f}",
                 )
+                if s in martingale_types:
+                    # Can't add more — CLOSE the position to stop bleeding
+                    self._force_close(fyers, action, label,
+                                      reason=f"Martingale blocked by balance limit "
+                                             f"(utilized ₹{utilized:,.2f} >= ₹{self.max_balance_usage:,.2f})")
                 return
 
         # ── BUY ────────────────────────────────────────────────────────────
@@ -690,11 +735,13 @@ class HeikenAshiMartingale:
         # ── BUY_WITH_SPECIFIC_VOLUME (martingale add long) ────────────────
         #    qty increases along the fibonacci series (computed by evaluate)
         elif s == Transaction.BUY_WITH_SPECIFIC_VOLUME:
-            # Safety guard: block martingale if already at hard cap
+            # Safety guard: block martingale if already at hard cap → close instead
             current_mg = self.tracker.get_martingale_count(sym) if self.tracker else 0
             if current_mg >= MAX_MARTINGALE_LEVEL:
                 log_strategy_event(sym, label, "MARTINGALE_BLOCKED",
-                                   details=f"mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL} — blocked")
+                                   details=f"mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL} — closing position")
+                self._force_close(fyers, action, label,
+                                  reason=f"Hard cap mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL}")
                 return
             fibo_qty = action.martingale_qty
             resp = fyers.buy(sym, fibo_qty)
@@ -709,11 +756,13 @@ class HeikenAshiMartingale:
         # ── SELL_WITH_SPECIFIC_VOLUME (martingale add short) ──────────────
         #    qty increases along the fibonacci series (computed by evaluate)
         elif s == Transaction.SELL_WITH_SPECIFIC_VOLUME:
-            # Safety guard: block martingale if already at hard cap
+            # Safety guard: block martingale if already at hard cap → close instead
             current_mg = self.tracker.get_martingale_count(sym) if self.tracker else 0
             if current_mg >= MAX_MARTINGALE_LEVEL:
                 log_strategy_event(sym, label, "MARTINGALE_BLOCKED",
-                                   details=f"mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL} — blocked")
+                                   details=f"mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL} — closing position")
+                self._force_close(fyers, action, label,
+                                  reason=f"Hard cap mg_level={current_mg} >= MAX={MAX_MARTINGALE_LEVEL}")
                 return
             fibo_qty = action.martingale_qty
             resp = fyers.sell(sym, fibo_qty)
