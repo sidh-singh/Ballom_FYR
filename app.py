@@ -130,6 +130,8 @@ def _dump_positions_and_account(fyers: Fyers) -> None:
     # Round all float columns in position DataFrame to 2 decimal places
     if not pos_df.empty:
         float_cols = pos_df.select_dtypes(include=["float", "float64"]).columns
+        # Deduplicate column names to avoid pandas "Columns must be same length as key" error
+        float_cols = float_cols.drop_duplicates()
         pos_df[float_cols] = pos_df[float_cols].round(2)
 
     rows = pos_df.to_dict(orient="records") if not pos_df.empty else []

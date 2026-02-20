@@ -204,7 +204,7 @@ POSITION_COL = [
     'netQty', 'side', 'qty', 'productType', 'realized_profit', 'pl',
     'crossCurrency', 'rbiRefRate', 'qtyMulti_com', 'segment', 'exchange',
     'unrealized_profit', 'slNo', 'ltp', 'fytoken', 'cfBuyQty', 'cfSellQty',
-    'dayBuyQty', 'daySellQty', 'exchange',
+    'dayBuyQty', 'daySellQty',
 ]
 
 SYMBOLS_COLS = [

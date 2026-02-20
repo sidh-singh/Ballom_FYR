@@ -344,12 +344,17 @@ class DemoFyers(Fyers):
                         # Snapshot closed position for dashboard
                         _cum_r = self._symbol_realized.get(key, 0.0) + pnl
                         self._day_closed_positions[key] = {
-                            "symbol": symbol, "netQty": 0,
+                            "symbol": symbol, "id": "", "netQty": 0,
                             "netAvg": round(pos.avg_price, 2), "ltp": round(ltp, 2),
                             "realized_profit": round(_cum_r, 2),
                             "unrealized_profit": 0, "productType": product_type,
                             "pl": round(_cum_r, 2), "qty": 0, "side": 0,
                             "buyAvg": 0, "buyQty": 0, "sellAvg": 0, "sellQty": 0,
+                            "crossCurrency": "N", "rbiRefRate": 0,
+                            "qtyMulti_com": 1, "segment": 11, "exchange": "NSE",
+                            "slNo": 1, "fytoken": "",
+                            "cfBuyQty": 0, "cfSellQty": 0,
+                            "dayBuyQty": 0, "daySellQty": 0,
                         }
                         del self.demo_positions[key]
                         self._symbol_order_count.pop(key, None)  # reset count
@@ -451,12 +456,17 @@ class DemoFyers(Fyers):
                         # Snapshot closed position for dashboard
                         _cum_r = self._symbol_realized.get(key, 0.0) + pnl
                         self._day_closed_positions[key] = {
-                            "symbol": symbol, "netQty": 0,
+                            "symbol": symbol, "id": "", "netQty": 0,
                             "netAvg": round(pos.avg_price, 2), "ltp": round(ltp, 2),
                             "realized_profit": round(_cum_r, 2),
                             "unrealized_profit": 0, "productType": product_type,
                             "pl": round(_cum_r, 2), "qty": 0, "side": 0,
                             "buyAvg": 0, "buyQty": 0, "sellAvg": 0, "sellQty": 0,
+                            "crossCurrency": "N", "rbiRefRate": 0,
+                            "qtyMulti_com": 1, "segment": 11, "exchange": "NSE",
+                            "slNo": 1, "fytoken": "",
+                            "cfBuyQty": 0, "cfSellQty": 0,
+                            "dayBuyQty": 0, "daySellQty": 0,
                         }
                         del self.demo_positions[key]
                         self._symbol_order_count.pop(key, None)  # reset count
