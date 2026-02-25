@@ -553,6 +553,57 @@ def compute_sha_gap(signal_sha_debug: list, trend_sha_debug: list) -> list:
     return gap_list
 
 
+def compute_sha_relationship(gap_list: list) -> dict:
+    """
+    Analyze the relationship between Signal SHA and Trend SHA based on
+    the GAP% time series (most-recent-first).
+
+    Returns
+    ───────
+    dict with:
+        status   : "DIVERGING" | "CONVERGING" | "PARALLEL" | "CLOSE"
+        strength : 0.0 – 1.0  (how strong the pattern is)
+        avg_gap  : average absolute GAP% across the window
+        delta    : change rate between recent and older halves
+    """
+    if not gap_list or len(gap_list) < 2:
+        return {"status": "UNKNOWN", "strength": 0.0, "avg_gap": 0.0, "delta": 0.0}
+
+    abs_gaps = [abs(g["gap_pct"]) for g in gap_list]
+    avg_gap = sum(abs_gaps) / len(abs_gaps)
+
+    # ── CLOSE: SHAs nearly overlapping ────────────────────────────────
+    CLOSE_THRESHOLD = 1.0  # < 1% average gap = close / overlapping
+    if avg_gap < CLOSE_THRESHOLD:
+        strength = round(1.0 - avg_gap / CLOSE_THRESHOLD, 4)
+        return {"status": "CLOSE", "strength": strength,
+                "avg_gap": round(avg_gap, 4), "delta": 0.0}
+
+    # ── Trend analysis: compare recent half vs older half ─────────────
+    mid = len(abs_gaps) // 2
+    recent = abs_gaps[:max(mid, 1)]       # first half  (more recent)
+    older  = abs_gaps[max(mid, 1):]       # second half (older)
+
+    avg_recent = sum(recent) / len(recent)
+    avg_older  = sum(older) / len(older) if older else avg_recent
+
+    delta = avg_recent - avg_older  # positive = gap widening
+
+    PARALLEL_THRESHOLD = 0.5  # < 0.5% change between halves = parallel
+    if abs(delta) < PARALLEL_THRESHOLD:
+        strength = round(1.0 - abs(delta) / PARALLEL_THRESHOLD, 4)
+        return {"status": "PARALLEL", "strength": strength,
+                "avg_gap": round(avg_gap, 4), "delta": round(delta, 4)}
+    elif delta > 0:
+        strength = round(min(1.0, delta / 5.0), 4)
+        return {"status": "DIVERGING", "strength": strength,
+                "avg_gap": round(avg_gap, 4), "delta": round(delta, 4)}
+    else:
+        strength = round(min(1.0, abs(delta) / 5.0), 4)
+        return {"status": "CONVERGING", "strength": strength,
+                "avg_gap": round(avg_gap, 4), "delta": round(delta, 4)}
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  INNER LOOP — the blocking trading loop
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -732,6 +783,11 @@ def inner_loop(
                 pe_gap = compute_sha_gap(pe_sha_dbg, pe_t_sha_dbg)
                 idx_gap = compute_sha_gap(idx_sha_dbg, idx_t_sha_dbg)
 
+                # ── Step B4: SHA Relationship (diverge/converge/parallel/close)
+                ce_rel = compute_sha_relationship(ce_gap)
+                pe_rel = compute_sha_relationship(pe_gap)
+                idx_rel = compute_sha_relationship(idx_gap)
+
                 power_list = [
                     (ce_power, ce_list, ce_cross),
                     (pe_power, pe_list, pe_cross),
@@ -787,6 +843,10 @@ def inner_loop(
                     ce_gap=ce_gap,
                     pe_gap=pe_gap,
                     idx_gap=idx_gap,
+                    # SHA Relationship data
+                    ce_relationship=ce_rel,
+                    pe_relationship=pe_rel,
+                    idx_relationship=idx_rel,
                     market_type=market_type,
                 )
 

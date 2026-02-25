@@ -171,9 +171,13 @@ def write_signal_state(
     ce_gap: list | None = None,
     pe_gap: list | None = None,
     idx_gap: list | None = None,
+    # ── SHA Relationship (diverging / converging / parallel / close) ───
+    ce_relationship: dict | None = None,
+    pe_relationship: dict | None = None,
+    idx_relationship: dict | None = None,
     market_type: str = "INDEX",
 ) -> None:
-    """Upsert one symbol's signal data (signal SHA + trend SHA + GAP%)."""
+    """Upsert one symbol's signal data (signal SHA + trend SHA + GAP% + relationship)."""
     data = _read_json(SIGNAL_STATE_FILE)
     data[symbol_key] = {
         "timestamp": _ts(),
@@ -203,6 +207,10 @@ def write_signal_state(
         "ce_gap": ce_gap or [],
         "pe_gap": pe_gap or [],
         "idx_gap": idx_gap or [],
+        # SHA Relationship
+        "ce_relationship": ce_relationship or {},
+        "pe_relationship": pe_relationship or {},
+        "idx_relationship": idx_relationship or {},
     }
     _write_json_atomic(SIGNAL_STATE_FILE, data)
 

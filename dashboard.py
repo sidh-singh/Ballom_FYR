@@ -384,6 +384,73 @@ def _gap_badge(label: str, gap_pct: float, color: str) -> html.Div:
     ])
 
 
+def _relationship_badge(label: str, rel_data: dict, color: str) -> html.Div:
+    """Compact badge showing SHA relationship status for one leg (CE / PE / IDX).
+
+    Statuses:
+        DIVERGING  — Signal & Trend SHAs are moving apart
+        CONVERGING — Signal & Trend SHAs are moving closer
+        PARALLEL   — SHAs moving in same direction at similar rate
+        CLOSE      — SHAs are nearly overlapping
+        UNKNOWN    — Insufficient data
+    """
+    status = rel_data.get("status", "UNKNOWN")
+    strength = rel_data.get("strength", 0.0)
+    avg_gap = rel_data.get("avg_gap", 0.0)
+    delta = rel_data.get("delta", 0.0)
+
+    # Status styling
+    STATUS_STYLES = {
+        "DIVERGING":  {"color": "#e74c3c", "icon": "\u2197\u2199", "bg": "rgba(231,76,60,0.10)"},
+        "CONVERGING": {"color": "#00bcd4", "icon": "\u2198\u2197", "bg": "rgba(0,188,212,0.10)"},
+        "PARALLEL":   {"color": "#f39c12", "icon": "\u2192\u2192", "bg": "rgba(243,156,18,0.10)"},
+        "CLOSE":      {"color": "#00d2a0", "icon": "\u2248",  "bg": "rgba(0,210,160,0.10)"},
+        "UNKNOWN":    {"color": "#4e5878", "icon": "\u2014",  "bg": "rgba(78,88,120,0.08)"},
+    }
+    st = STATUS_STYLES.get(status, STATUS_STYLES["UNKNOWN"])
+
+    # Strength bar (3 segments)
+    bar_segments = []
+    for i in range(3):
+        threshold = (i + 1) / 3
+        filled = strength >= threshold
+        bar_segments.append(
+            html.Span(style={
+                "display": "inline-block", "width": "14px", "height": "4px",
+                "borderRadius": "2px", "marginRight": "2px",
+                "background": st["color"] if filled else "rgba(255,255,255,0.08)",
+                "opacity": "1" if filled else "0.3",
+            })
+        )
+
+    sign = "+" if delta > 0 else ""
+
+    return html.Div(style={
+        "background": st["bg"],
+        "borderRadius": "8px",
+        "padding": "8px 10px",
+        "textAlign": "center",
+        "border": f"1px solid {color}33",
+    }, children=[
+        html.Div(label, style={
+            "fontSize": "0.6rem", "fontWeight": "700",
+            "color": color, "letterSpacing": "0.5px", "marginBottom": "4px"}),
+        html.Div(f"{st['icon']}", style={
+            "fontSize": "1rem", "marginBottom": "2px"}),
+        html.Div(status, style={
+            "fontSize": "0.7rem", "fontWeight": "800",
+            "color": st["color"], "fontFamily": "'JetBrains Mono', monospace",
+            "letterSpacing": "0.5px"}),
+        html.Div(bar_segments, style={
+            "display": "flex", "justifyContent": "center",
+            "marginTop": "4px", "marginBottom": "2px"}),
+        html.Div(f"\u0394 {sign}{delta:.2f}%", style={
+            "fontSize": "0.5rem", "fontWeight": "600",
+            "color": COLORS["text_dim"], "fontFamily": "'JetBrains Mono', monospace",
+            "marginTop": "2px"}),
+    ])
+
+
 def _signal_row(label: str, icon: str, color: str,
                 power: int, lst: list, cross_list: list) -> html.Div:
     """One compact row for CE / PE / IDX -- 4-column grid."""
@@ -1532,6 +1599,11 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             pe_gap_pct = pe_gap_list[0]["gap_pct"] if pe_gap_list else 0.0
             idx_gap_pct = idx_gap_list[0]["gap_pct"] if idx_gap_list else 0.0
 
+            # SHA Relationship data
+            ce_rel = sig.get("ce_relationship", {})
+            pe_rel = sig.get("pe_relationship", {})
+            idx_rel = sig.get("idx_relationship", {})
+
             col_hdr = {"fontSize": "0.65rem", "color": COLORS["text_dim"],
                        "fontWeight": "600", "letterSpacing": "0.5px"}
             row_divider = html.Hr(style={
@@ -1590,7 +1662,7 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                         "padding": "10px 18px 0",
                     }, children=[
                         html.Span(f"\U0001f4ca SIGNAL SHA ({SHA_LENGTH})", style={
-                            "fontSize": "0.7rem", "fontWeight": "700",
+                            "fontSize": "0.72rem", "fontWeight": "700",
                             "color": COLORS["text_dim"], "letterSpacing": "0.5px"}),
                     ]),
                     html.Div(style={
@@ -1622,7 +1694,7 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             "alignItems": "center", "padding": "10px 0 0",
                         }, children=[
                             html.Span(f"\U0001f4c8 TREND SHA ({SHA_TREND_LENGTH})", style={
-                                "fontSize": "0.7rem", "fontWeight": "700",
+                                "fontSize": "0.72rem", "fontWeight": "700",
                                 "color": COLORS["text_dim"], "letterSpacing": "0.5px"}),
                         ]),
                         html.Div(style={
@@ -1651,7 +1723,7 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                         "borderTop": f"1px solid {COLORS['divider']}",
                     }, children=[
                         html.Span("\U0001f4cf GAP%  (Signal vs Trend SHA)", style={
-                            "fontSize": "0.7rem", "fontWeight": "700",
+                            "fontSize": "0.72rem", "fontWeight": "700",
                             "color": COLORS["text_dim"], "letterSpacing": "0.5px",
                             "display": "block", "marginBottom": "8px"}),
                         html.Div(style={
@@ -1661,6 +1733,25 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             _gap_badge("CE", ce_gap_pct, "#5dade2"),
                             _gap_badge("PE", pe_gap_pct, "#ff6b6b"),
                             _gap_badge("IDX", idx_gap_pct, "#ffd93d"),
+                        ]),
+                    ]),
+
+                    # ── SHA Relationship section ─────────────────────────────
+                    html.Div(style={
+                        "padding": "10px 18px 12px",
+                        "borderTop": f"1px solid {COLORS['divider']}",
+                    }, children=[
+                        html.Span("\U0001f504 SHA RELATIONSHIP  (Signal \u2194 Trend)", style={
+                            "fontSize": "0.72rem", "fontWeight": "700",
+                            "color": COLORS["text_dim"], "letterSpacing": "0.5px",
+                            "display": "block", "marginBottom": "8px"}),
+                        html.Div(style={
+                            "display": "grid", "gridTemplateColumns": "1fr 1fr 1fr",
+                            "gap": "8px",
+                        }, children=[
+                            _relationship_badge("CE", ce_rel, "#5dade2"),
+                            _relationship_badge("PE", pe_rel, "#ff6b6b"),
+                            _relationship_badge("IDX", idx_rel, "#ffd93d"),
                         ]),
                     ]),
 
