@@ -853,6 +853,13 @@ def inner_loop(
                 # ── Step C: Strategy evaluation ───────────────────────────
                 pos_df, _ = fyers.position()
 
+                # SHA Relationship data for strategy
+                relationship_data = {
+                    "ce_rel": ce_rel,
+                    "pe_rel": pe_rel,
+                    "idx_rel": idx_rel,
+                }
+
                 ce_action, pe_action = strategy.evaluate(
                     ce_symbol=ce_symbol,
                     pe_symbol=pe_symbol,
@@ -862,6 +869,7 @@ def inner_loop(
                     hedge=pair_hedge,
                     trend_power_list=trend_power_list,
                     gap_data=gap_data,
+                    relationship_data=relationship_data,
                 )
 
                 # ── Step D: Execute orders ────────────────────────────────

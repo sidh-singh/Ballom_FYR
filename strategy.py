@@ -239,6 +239,7 @@ class HeikenAshiMartingale:
         hedge: float = STRATEGY_HEDGE_INDEX,
         trend_power_list: list[tuple] | None = None,
         gap_data: dict | None = None,
+        relationship_data: dict | None = None,
     ) -> tuple[OrderAction, OrderAction]:
         """
         Determine the trading action for CE and PE legs.
@@ -260,6 +261,10 @@ class HeikenAshiMartingale:
                       Use gap_data["ce_gap"][0]["gap_pct"] for latest CE gap%.
                       GAP_RANGE_LOW / GAP_RANGE_HIGH from constants.py available
                       as class-level references for range checks.
+        relationship_data : dict with keys ce_rel, pe_rel, idx_rel — each a dict
+                      with {status, strength, avg_gap, delta}.
+                      status: "DIVERGING" | "CONVERGING" | "PARALLEL" | "CLOSE"
+                      Use relationship_data["ce_rel"]["status"] for CE relationship.
 
         Returns
         ───────
@@ -295,6 +300,15 @@ class HeikenAshiMartingale:
         # momentum aligns with trend without over-extension.
         ce_gap_in_range = GAP_RANGE_LOW <= abs(ce_gap_pct) <= GAP_RANGE_HIGH
         pe_gap_in_range = GAP_RANGE_LOW <= abs(pe_gap_pct) <= GAP_RANGE_HIGH
+
+        # ── SHA Relationship data (optional — backwards compatible) ────
+        _rel = relationship_data or {}
+        ce_rel = _rel.get("ce_rel", {})
+        pe_rel = _rel.get("pe_rel", {})
+        idx_rel = _rel.get("idx_rel", {})
+        ce_rel_status = ce_rel.get("status", "UNKNOWN")
+        pe_rel_status = pe_rel.get("status", "UNKNOWN")
+        idx_rel_status = idx_rel.get("status", "UNKNOWN")
 
         ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp, ce_avg = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
@@ -364,6 +378,7 @@ class HeikenAshiMartingale:
                     f"CE_cross={ce_cross[0]} PE_cross={pe_cross[0]} "
                     f"CE_pwr={ce_power}/7 PE_pwr={pe_power}/7 "
                     f"GAP: CE={ce_gap_pct:.2f}% PE={pe_gap_pct:.2f}% IDX={idx_gap_pct:.2f}%"
+                    f" | REL: CE={ce_rel_status} PE={pe_rel_status} IDX={idx_rel_status}"
                     f" | pending_close: CE={self.is_pending_close(ce_symbol)} PE={self.is_pending_close(pe_symbol)}",
         )
 
