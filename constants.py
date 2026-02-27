@@ -49,11 +49,11 @@ COMMODITY_END   = dt_time(23, 55)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Signal SHA — fast / short-term momentum indicator
-SHA_LENGTH          = 9
+SHA_LENGTH          = 11
 SHA_MA_TYPE         = "RMA"
 
 # Trend SHA — slower / longer-term trend indicator
-SHA_TREND_LENGTH    = 55
+SHA_TREND_LENGTH    = 30
 SHA_TREND_MA_TYPE   = "RMA"
 
 DEFAULT_TIMEFRAME   = "1"
