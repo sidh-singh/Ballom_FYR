@@ -28,6 +28,7 @@ from constants import (
     MAX_MARTINGALE_LEVEL,
     GAP_RANGE_LOW,
     GAP_RANGE_HIGH,
+    ENTRY_RELATIONSHIP_STATUSES,
     estimate_trade_charges,
 )
 from state_writer import log_strategy_event
@@ -301,6 +302,13 @@ class HeikenAshiMartingale:
         ce_gap_in_range = GAP_RANGE_LOW <= abs(ce_gap_pct) <= GAP_RANGE_HIGH
         pe_gap_in_range = GAP_RANGE_LOW <= abs(pe_gap_pct) <= GAP_RANGE_HIGH
 
+        # SHA Relationship filter: only enter when signal-vs-trend
+        # relationship matches allowed statuses (e.g. DIVERGING).
+        # Disabled (always True) if ENTRY_RELATIONSHIP_STATUSES is empty/None.
+        _rel_filter = ENTRY_RELATIONSHIP_STATUSES or set()
+        ce_rel_ok = (ce_rel_status in _rel_filter) if _rel_filter else True
+        pe_rel_ok = (pe_rel_status in _rel_filter) if _rel_filter else True
+
         # ── SHA Relationship data (optional — backwards compatible) ────
         _rel = relationship_data or {}
         ce_rel = _rel.get("ce_rel", {})
@@ -430,18 +438,20 @@ class HeikenAshiMartingale:
             # Both Signal SHA and Trend SHA must agree on direction,
             # IDX must confirm, and GAP% must be in range.
             # Crossover is still computed but NOT used in entry condition.
-            if (ce_list[0] == 1) and (idx_list[0] == 1) and (ce_t_list and ce_t_list[0] == 1) and ce_gap_in_range:
+            if (ce_list[0] == 1) and (idx_list[0] == 1) and (ce_t_list and ce_t_list[0] == 1) and ce_gap_in_range and ce_rel_ok:
                 ce_action.status = Transaction.BUY
                 log_strategy_event(ce_symbol, "CE", "ENTRY_BUY",
                                     qty=base_qty,
                                     details=f"Signal+Trend bullish, IDX bullish, "
-                                            f"GAP={ce_gap_pct:.2f}% in [{GAP_RANGE_LOW},{GAP_RANGE_HIGH}]")
-            elif (pe_list[0] == 1) and (idx_list[0] == 0) and (pe_t_list and pe_t_list[0] == 1) and pe_gap_in_range:
+                                            f"GAP={ce_gap_pct:.2f}% in [{GAP_RANGE_LOW},{GAP_RANGE_HIGH}]"
+                                            f" REL={ce_rel_status}")
+            elif (pe_list[0] == 1) and (idx_list[0] == 0) and (pe_t_list and pe_t_list[0] == 1) and pe_gap_in_range and pe_rel_ok:
                 pe_action.status = Transaction.BUY
                 log_strategy_event(pe_symbol, "PE", "ENTRY_BUY",
                                     qty=base_qty,
                                     details=f"Signal+Trend bullish, IDX bearish, "
-                                            f"GAP={pe_gap_pct:.2f}% in [{GAP_RANGE_LOW},{GAP_RANGE_HIGH}]")
+                                            f"GAP={pe_gap_pct:.2f}% in [{GAP_RANGE_LOW},{GAP_RANGE_HIGH}]"
+                                            f" REL={pe_rel_status}")
 
         elif ce_qty > 0:
             # ── exit / martingale (long CE) ──────────────────────────────
@@ -452,7 +462,7 @@ class HeikenAshiMartingale:
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={ce_charges:.2f})")
-            elif ce_mg_level >= MAX_MARTINGALE_LEVEL:
+            elif (ce_list[0] == 0) and (ce_t_list and ce_t_list[0] == 0) and ce_gap_in_range and ce_rel_ok:
                 # 2 martingale adds done → close on 3rd trigger, take small loss
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
@@ -482,7 +492,7 @@ class HeikenAshiMartingale:
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={pe_charges:.2f})")
-            elif pe_mg_level >= MAX_MARTINGALE_LEVEL:
+            elif (pe_list[0] == 0) and (pe_t_list and pe_t_list[0] == 0) and pe_gap_in_range and pe_rel_ok:
                 # 2 martingale adds done → close on 3rd trigger, take small loss
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty

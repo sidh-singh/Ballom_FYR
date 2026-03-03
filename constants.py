@@ -49,11 +49,11 @@ COMMODITY_END   = dt_time(23, 55)
 # ═══════════════════════════════════════════════════════════════════════════════
 
 # Signal SHA — fast / short-term momentum indicator
-SHA_LENGTH          = 11
+SHA_LENGTH          = 3
 SHA_MA_TYPE         = "RMA"
 
 # Trend SHA — slower / longer-term trend indicator
-SHA_TREND_LENGTH    = 30
+SHA_TREND_LENGTH    = 6
 SHA_TREND_MA_TYPE   = "RMA"
 
 DEFAULT_TIMEFRAME   = "1"
@@ -155,6 +155,13 @@ STRATEGY_HEDGE_COMMODITY  = 200    # ₹ profit target for commodity option pair
 STRATEGY_PRODUCT_TYPE     = "MARGIN"
 FIBO_SEQUENCE_LENGTH      = 25     # Length of fibonacci sequence for martingale
 MAX_MARTINGALE_LEVEL      = 2      # Hard cap: max martingale adds (entry + 2 adds, close on 3rd trigger)
+
+# SHA Relationship filter for entry:
+# Only enter when the relationship between Signal SHA and Trend SHA
+# matches one of these statuses.  Valid values:
+#   "DIVERGING", "CONVERGING", "PARALLEL", "CLOSE"
+# Set to None or empty set to disable the filter entirely.
+ENTRY_RELATIONSHIP_STATUSES: set[str] = {"DIVERGING"}
 
 # Martingale threshold formula (SQUARED FIBONACCI):
 #   threshold[level] = fibonacci[level]² × HEDGE
