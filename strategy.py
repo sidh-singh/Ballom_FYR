@@ -302,13 +302,6 @@ class HeikenAshiMartingale:
         ce_gap_in_range = GAP_RANGE_LOW <= abs(ce_gap_pct) <= GAP_RANGE_HIGH
         pe_gap_in_range = GAP_RANGE_LOW <= abs(pe_gap_pct) <= GAP_RANGE_HIGH
 
-        # SHA Relationship filter: only enter when signal-vs-trend
-        # relationship matches allowed statuses (e.g. DIVERGING).
-        # Disabled (always True) if ENTRY_RELATIONSHIP_STATUSES is empty/None.
-        _rel_filter = ENTRY_RELATIONSHIP_STATUSES or set()
-        ce_rel_ok = (ce_rel_status in _rel_filter) if _rel_filter else True
-        pe_rel_ok = (pe_rel_status in _rel_filter) if _rel_filter else True
-
         # ── SHA Relationship data (optional — backwards compatible) ────
         _rel = relationship_data or {}
         ce_rel = _rel.get("ce_rel", {})
@@ -317,6 +310,13 @@ class HeikenAshiMartingale:
         ce_rel_status = ce_rel.get("status", "UNKNOWN")
         pe_rel_status = pe_rel.get("status", "UNKNOWN")
         idx_rel_status = idx_rel.get("status", "UNKNOWN")
+
+        # SHA Relationship filter: only enter when signal-vs-trend
+        # relationship matches allowed statuses (e.g. DIVERGING).
+        # Disabled (always True) if ENTRY_RELATIONSHIP_STATUSES is empty/None.
+        _rel_filter = ENTRY_RELATIONSHIP_STATUSES or set()
+        ce_rel_ok = (ce_rel_status in _rel_filter) if _rel_filter else True
+        pe_rel_ok = (pe_rel_status in _rel_filter) if _rel_filter else True
 
         ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp, ce_avg = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
