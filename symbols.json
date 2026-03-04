@@ -21,20 +21,6 @@
             "qty_times" : 1,
             "hedge" : 200,
             "enabled": true
-        },
-        {
-            "symbol" : "SILVER",
-            "commodity": "SILVER",
-            "qty_times" : 1,
-            "hedge" : 200,
-            "enabled": true
-        },
-        {
-            "symbol" : "GOLD",
-            "commodity": "GOLD",
-            "qty_times" : 1,
-            "hedge" : 200,
-            "enabled": true
         }
     ],
     "max_active_commodities": 1,
