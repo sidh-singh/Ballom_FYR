@@ -1,31 +1,39 @@
 @echo off
 REM ================================================================================
-REM === JENKINS UNICODE FIX: Set console to UTF-8 encoding ===
+REM === UPDATER LAUNCHER — SHA Signal Analysis updater service
 REM ================================================================================
-REM This ensures Unicode characters (box-drawing, special symbols) display correctly
-REM in Jenkins console output on Windows. Remove this if not needed.
+REM Usage:  start_updater.bat [demo|live]
+REM
+REM Reads Fyers token from C:/Ballom_FYR/fyers_token.json (written by dev_scanner).
+REM Continuously computes SHA signals for all active pairs and writes
+REM signal_state.json for the dev branch dashboard.
+REM
+REM Auto-restarts on crash via forever loop.
+REM ================================================================================
+
+REM === Jenkins Unicode fix ===
 chcp 65001 >nul 2>&1
 
-REM === Force Python to use UTF-8 encoding (CRITICAL for Unicode support) ===
+REM === Force Python to use UTF-8 encoding ===
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
-REM === Define Python installation path explicitly ===
+REM === Python path ===
 set "PYTHON_ROOT=C:\Users\Administrator\AppData\Local\Programs\Python\Python311"
 set "PYTHON_EXE=%PYTHON_ROOT%\python.exe"
 
 echo.
 echo ================================================================================
-echo              FYERS JOB LAUNCHER
+echo              FYERS SHA UPDATER LAUNCHER
 echo ================================================================================
 echo Python path: %PYTHON_EXE%
 echo.
 
-REM === Get mode argument (strategy parameter removed) ===
+REM === Get mode argument ===
 set "MODE=%1"
 if "%MODE%"=="" (
-	set "MODE=demo"
-	echo [INFO] Mode not specified, defaulting to DEMO mode for safety
+    set "MODE=demo"
+    echo [INFO] Mode not specified, defaulting to DEMO mode for safety
 )
 
 echo.
@@ -33,17 +41,18 @@ echo ===========================================================================
 echo Mode:     %MODE%
 echo ================================================================================
 
-REM === Safety warning for LIVE mode ===
+REM === Mode info ===
 if /i "%MODE%"=="live" goto :LIVE_WARNING
 goto :DEMO_INFO
 
 :LIVE_WARNING
 echo.
 echo ********************************************************************************
-echo                            LIVE MODE ACTIVE
+echo                           LIVE MODE ACTIVE
 echo ********************************************************************************
 echo.
-echo    LIVE TRADING WITH REAL MONEY - Orders will be placed immediately!
+echo    LIVE data — reads live Fyers token, fetches real market data.
+echo    This service does NOT place any orders.
 echo.
 echo ********************************************************************************
 echo.
@@ -51,15 +60,14 @@ goto :CONTINUE_SCRIPT
 
 :DEMO_INFO
 echo.
-echo [DEMO MODE] Paper trading - No real money at risk
-echo [DEMO MODE] Data stored at C:\AlgoTrading_Demo\
+echo [DEMO MODE] Uses demo Fyers token — no real-money risk
 echo.
 
 :CONTINUE_SCRIPT
 
-echo ============= STARTING SCRIPT =============
+echo ============= STARTING UPDATER =============
 
-REM === Check if requirements already installed ===
+REM === Install dependencies on first run ===
 if not exist ".\deps_installed.flag" goto :INSTALL_DEPS
 goto :SKIP_DEPS
 
@@ -77,14 +85,15 @@ echo Dependencies already installed, skipping...
 :RUN_SCRIPT
 echo.
 echo ================================================================================
-echo Launching job in %MODE% mode
+echo Launching updater in %MODE% mode
 echo ================================================================================
 echo.
 
-REM === Run launcher with mode only ===
-"%PYTHON_EXE%" -X utf8 -u app.py %MODE%
-
+REM === Forever-restart loop — auto-recover from crashes ===
+:FOREVER
+"%PYTHON_EXE%" -X utf8 -u updater_app.py %MODE%
 echo.
-echo ============= SCRIPT FINISHED =============
-pause
-
+echo [WARNING] Updater exited unexpectedly — restarting in 10 seconds...
+echo           Press Ctrl+C to abort.
+timeout /t 10 /nobreak >nul
+goto :FOREVER
