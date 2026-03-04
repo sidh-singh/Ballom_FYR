@@ -23,7 +23,7 @@ REM ── Configuration ──────────────────�
 set "MODE=%~1"
 if "%MODE%"=="" set "MODE=demo"
 
-set "PYTHON_EXE=python"
+set "PYTHON_EXE=C:\Users\Administrator\AppData\Local\Programs\Python\Python311\python.exe"
 set "SCRIPT_DIR=%~dp0"
 set "SCRIPT=trading_app.py"
 set "LOG_DIR=C:\Ballom_FYR\logs"
