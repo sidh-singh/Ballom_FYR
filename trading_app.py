@@ -18,6 +18,7 @@ Outer Loop (runs forever):
   Step 1 — Day-change detection  → reload token + fetch holidays
   Step 2 — Time-window routing   → indices 9:15-15:30, commodities 15:30-23:55
   Step 3 — Position conflict     → mutual exclusion between index/commodity
+  Step 3b— Signal update         → compute SHA for ALL pairs every cycle (dashboard freshness)
   Step 4 — Inner loop            → fetch history → SHA → strategy → trade → wait
 
 Inner Loop (per symbol pair):
@@ -406,6 +407,109 @@ def compute_sha_relationship(gap_list: list) -> dict:
         strength = round(min(1.0, abs(delta) / 5.0), 4)
         return {"status": "CONVERGING", "strength": strength,
                 "avg_gap": round(avg_gap, 4), "delta": round(delta, 4)}
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  SIGNAL UPDATE  (runs every outer-loop cycle — keeps dashboard fresh)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def update_signals_for_all_pairs(
+    fyers: Fyers,
+    holidays: set,
+    special_sessions: list,
+    timeframe: str = DEFAULT_TIMEFRAME,
+    candles: int = DEFAULT_CANDLES,
+) -> None:
+    """
+    Compute SHA signals for ALL pairs (INDEX + COMMODITY) and write to
+    signal_state.json every outer-loop cycle — regardless of trading window.
+
+    This ensures the dashboard always has fresh signal data even outside
+    market hours.
+    """
+    for pairs_json, market_type in [
+        (OPTION_PAIRS_JSON, "INDEX"),
+        (COMMODITY_PAIRS_JSON, "COMMODITY"),
+    ]:
+        pairs = _load_json(pairs_json)
+        if not pairs:
+            continue
+
+        for symbol_key, info in pairs.items():
+            ce_symbol  = info.get("CE", "")
+            pe_symbol  = info.get("PE", "")
+            underlying = info.get("indices", info.get("commodity", ""))
+
+            if not ce_symbol or not pe_symbol or not underlying:
+                continue
+
+            pair_type = "INDEX" if info.get("indices") else "COMMODITY"
+            if pair_type != market_type:
+                continue
+
+            try:
+                # ── Fetch historical data ─────────────────────────────
+                ce_df = fyers.fetch_historical_data(
+                    ce_symbol, timeframe, candles,
+                    market_type=market_type,
+                    holidays=holidays,
+                    special_sessions=special_sessions,
+                )
+                pe_df = fyers.fetch_historical_data(
+                    pe_symbol, timeframe, candles,
+                    market_type=market_type,
+                    holidays=holidays,
+                    special_sessions=special_sessions,
+                )
+                idx_df = fyers.fetch_historical_data(
+                    underlying, timeframe, candles,
+                    market_type=market_type,
+                    holidays=holidays,
+                    special_sessions=special_sessions,
+                )
+
+                # ── Signal SHA ────────────────────────────────────────
+                ce_power, ce_list, ce_cross, ce_sha_dbg = get_symbol_details(ce_df)
+                pe_power, pe_list, pe_cross, pe_sha_dbg = get_symbol_details(pe_df)
+                idx_power, idx_list, idx_cross, idx_sha_dbg = get_symbol_details(idx_df)
+
+                # ── Trend SHA (longer period) ─────────────────────────
+                ce_t_power, ce_t_list, ce_t_cross, ce_t_sha_dbg = get_trend_details(ce_df)
+                pe_t_power, pe_t_list, pe_t_cross, pe_t_sha_dbg = get_trend_details(pe_df)
+                idx_t_power, idx_t_list, idx_t_cross, idx_t_sha_dbg = get_trend_details(idx_df)
+
+                # ── GAP% ──────────────────────────────────────────────
+                ce_gap = compute_sha_gap(ce_sha_dbg, ce_t_sha_dbg)
+                pe_gap = compute_sha_gap(pe_sha_dbg, pe_t_sha_dbg)
+                idx_gap = compute_sha_gap(idx_sha_dbg, idx_t_sha_dbg)
+
+                # ── Relationship ──────────────────────────────────────
+                ce_rel = compute_sha_relationship(ce_gap)
+                pe_rel = compute_sha_relationship(pe_gap)
+                idx_rel = compute_sha_relationship(idx_gap)
+
+                # ── Write to signal_state.json ────────────────────────
+                write_signal_state(
+                    symbol_key=symbol_key,
+                    ce_symbol=ce_symbol,
+                    pe_symbol=pe_symbol,
+                    underlying=underlying,
+                    ce_power=ce_power, ce_list=ce_list, ce_crossover=ce_cross,
+                    pe_power=pe_power, pe_list=pe_list, pe_crossover=pe_cross,
+                    idx_power=idx_power, idx_list=idx_list, idx_crossover=idx_cross,
+                    ce_sha_debug=ce_sha_dbg, pe_sha_debug=pe_sha_dbg, idx_sha_debug=idx_sha_dbg,
+                    ce_trend_power=ce_t_power, ce_trend_list=ce_t_list, ce_trend_crossover=ce_t_cross,
+                    pe_trend_power=pe_t_power, pe_trend_list=pe_t_list, pe_trend_crossover=pe_t_cross,
+                    idx_trend_power=idx_t_power, idx_trend_list=idx_t_list, idx_trend_crossover=idx_t_cross,
+                    ce_trend_sha_debug=ce_t_sha_dbg, pe_trend_sha_debug=pe_t_sha_dbg, idx_trend_sha_debug=idx_t_sha_dbg,
+                    ce_gap=ce_gap, pe_gap=pe_gap, idx_gap=idx_gap,
+                    ce_relationship=ce_rel, pe_relationship=pe_rel, idx_relationship=idx_rel,
+                    market_type=market_type,
+                )
+
+            except Exception as e:
+                log_strategy_event(symbol_key, "SIGNAL", "UPDATE_FAIL",
+                                   details=str(e))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -875,6 +979,13 @@ def main():
             _dump_positions_and_account(fyers)
         except Exception:
             pass
+
+        # ── Always update signals for ALL pairs (keeps dashboard fresh) ──
+        try:
+            update_signals_for_all_pairs(fyers, holidays, special_sessions)
+        except Exception as e:
+            log_strategy_event("SYSTEM", "OUTER", "SIGNAL_UPDATE_FAIL",
+                               details=str(e))
 
         # ── Step 4a: INDICES window (9:15 - 15:30) — FIRST PRIORITY ─────
         if in_indices_window:
