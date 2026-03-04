@@ -462,13 +462,14 @@ class HeikenAshiMartingale:
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={ce_charges:.2f})")
-            elif (ce_list[0] == 0) and (ce_t_list and ce_t_list[0] == 0) and ce_gap_in_range and ce_rel_ok:
-                # 2 martingale adds done → close on 3rd trigger, take small loss
+            elif (ce_list[0] == 0) and (ce_t_list and ce_t_list[0] == 0) and ce_mg_level >= MAX_MARTINGALE_LEVEL:
+                # Martingale maxed out AND both SHAs flipped adverse → stop bleeding
                 ce_action.status = Transaction.CLOSE_BUY
                 ce_action.qty = ce_qty
                 log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
                                     qty=ce_qty, pl=ce_pl,
-                                    details=f"mg_level={ce_mg_level} >= MAX={MAX_MARTINGALE_LEVEL} — closing")
+                                    details=f"mg_level={ce_mg_level} >= MAX={MAX_MARTINGALE_LEVEL}, "
+                                            f"Signal+Trend bearish — closing")
             elif ce_pl < -self._fibo_threshold(ce_mg_level, hedge):
                 thr = self._fibo_threshold(ce_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
@@ -492,13 +493,14 @@ class HeikenAshiMartingale:
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={pe_charges:.2f})")
-            elif (pe_list[0] == 0) and (pe_t_list and pe_t_list[0] == 0) and pe_gap_in_range and pe_rel_ok:
-                # 2 martingale adds done → close on 3rd trigger, take small loss
+            elif (pe_list[0] == 0) and (pe_t_list and pe_t_list[0] == 0) and pe_mg_level >= MAX_MARTINGALE_LEVEL:
+                # Martingale maxed out AND both SHAs flipped adverse → stop bleeding
                 pe_action.status = Transaction.CLOSE_BUY
                 pe_action.qty = pe_qty
                 log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
                                     qty=pe_qty, pl=pe_pl,
-                                    details=f"mg_level={pe_mg_level} >= MAX={MAX_MARTINGALE_LEVEL} — closing")
+                                    details=f"mg_level={pe_mg_level} >= MAX={MAX_MARTINGALE_LEVEL}, "
+                                            f"Signal+Trend bearish — closing")
             elif pe_pl < -self._fibo_threshold(pe_mg_level, hedge):
                 thr = self._fibo_threshold(pe_mg_level, hedge)
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)

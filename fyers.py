@@ -307,6 +307,10 @@ class Fyers:
         """
         if asset_type == "COMMODITY":
             min_trend_score = 0.35
+            # Commodity options have much lower OI and volume than index
+            # options — relax filters to avoid filtering out all rows.
+            min_oi_threshold = min(min_oi_threshold, 500)
+            min_days_to_expiry = min(min_days_to_expiry, 3)
 
         # ── helpers ────────────────────────────────────────────────────────────
         def _numeric(df, cols):
@@ -350,14 +354,24 @@ class Fyers:
             return 0.7
 
         def _moneyness(strike, price, opt_type, pref):
+            """Score how well-placed the strike is for BUYING the option.
+
+            For a BUY-only strategy, slight ITM or ATM options have the
+            best delta (premium responds strongly to underlying moves)
+            while still being affordable.  Deep OTM is cheap but delta is
+            too low; deep ITM is expensive with diminishing gamma.
+            """
             m = (strike - price) / price if opt_type == "CE" else (price - strike) / price
             if pref == "ATM":
                 return float(np.exp(-abs(m) * 50))
             if pref == "SLIGHT_OTM":
-                if 0.01 <= m <= 0.03: return 1.0
-                if 0.0  <= m <= 0.05: return 0.8
-                if -0.02 <= m < 0:    return 0.6
-                return 0.3
+                # Slightly OTM → best balance of delta + affordability for BUY
+                if 0.005 <= m <= 0.02:  return 1.0   # sweet spot
+                if 0.0   <= m <= 0.04:  return 0.85   # near ATM / moderate OTM
+                if -0.01  <= m < 0:     return 0.75   # slight ITM (good delta)
+                if -0.03  <= m < -0.01: return 0.55   # deeper ITM
+                if 0.04  <  m <= 0.07:  return 0.4    # far OTM (low delta)
+                return 0.2
             # OTM
             if 0.02 <= m <= 0.05: return 1.0
             if 0.01 <= m <= 0.07: return 0.7
@@ -429,11 +443,13 @@ class Fyers:
 
                     df = _numeric(df, [
                         "strike_price", "oi", "prev_oi", "volume",
-                        "ask", "bid", "ltp", "iv",
+                        "ask", "bid", "ltp", "iv", "chng", "chng_oi",
                     ])
                     rows_before = len(df)
-                    df = df[(df["ltp"] <= max_premium_per_lot) & (df["ltp"] > 5)]
-                    df = df[(df["oi"] >= min_oi_threshold) | (df["volume"] > 100)]
+                    _ltp_floor = 1 if asset_type == "COMMODITY" else 5
+                    _vol_floor = 10 if asset_type == "COMMODITY" else 100
+                    df = df[(df["ltp"] <= max_premium_per_lot) & (df["ltp"] > _ltp_floor)]
+                    df = df[(df["oi"] >= min_oi_threshold) | (df["volume"] > _vol_floor)]
                     if df.empty:
                         _log.append(f"exp={exp_date.strftime('%d%b')} rows={rows_before}->0(filtered)")
                         continue
@@ -441,17 +457,41 @@ class Fyers:
                     _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}")
 
                     # ─── 4. Score CE and PE separately ────────────────────
+                    # Scoring is optimised for a BUY-only strategy:
+                    #   • Moneyness: slight OTM / ATM for best delta
+                    #   • OI buildup: fresh positions = demand for this strike
+                    #   • Price momentum: options already gaining value
+                    #   • Liquidity: tight spread, decent volume
                     for otype in ["CE", "PE"]:
                         sub = df[df["option_type"] == otype].copy()
                         if sub.empty:
                             _log.append(f"  {otype}=0rows")
                             continue
+
+                        # OI buildup (positive change = fresh longs being built)
+                        oi_change = (sub["oi"] - sub["prev_oi"]).fillna(0)
+                        # Also use chng_oi if available (more reliable)
+                        if "chng_oi" in sub.columns:
+                            chng_oi = sub["chng_oi"].fillna(0)
+                            oi_change = np.maximum(oi_change, chng_oi)
+
+                        # Price momentum: positive chng means option premium is
+                        # rising — good for buying (confirms underlying trend)
+                        price_momentum = pd.Series(0.5, index=sub.index)
+                        if "chng" in sub.columns:
+                            chng = sub["chng"].fillna(0)
+                            # Positive price change → higher score (BUY likes rising premiums)
+                            price_momentum = np.where(chng > 0, np.clip(0.5 + chng / (sub["ltp"] * 0.1 + 1e-9), 0.5, 1.0),
+                                                      np.clip(0.5 + chng / (sub["ltp"] * 0.1 + 1e-9), 0.1, 0.5))
+                            price_momentum = pd.Series(price_momentum, index=sub.index)
+
                         sub["score"] = (
-                            sub["ltp"].apply(lambda x: _affordability(x, max_premium_per_lot)) * 0.20
-                            + _bid_ask_eff(sub["bid"].fillna(0), sub["ask"].fillna(0)) * 0.20
-                            + sub["strike_price"].apply(lambda x: _moneyness(x, current_price, otype, prefer_itm_otm)) * 0.20
-                            + sub["iv"].apply(lambda iv: _theta_score(dte, iv)) * 0.15
-                            + _normalize((sub["oi"] - sub["prev_oi"]).clip(lower=0)) * 0.15
+                            sub["strike_price"].apply(lambda x: _moneyness(x, current_price, otype, prefer_itm_otm)) * 0.25
+                            + _bid_ask_eff(sub["bid"].fillna(0), sub["ask"].fillna(0)) * 0.15
+                            + sub["ltp"].apply(lambda x: _affordability(x, max_premium_per_lot)) * 0.15
+                            + sub["iv"].apply(lambda iv: _theta_score(dte, iv)) * 0.10
+                            + _normalize(oi_change.clip(lower=0)) * 0.15
+                            + price_momentum * 0.10
                             + _normalize(np.log1p(sub["volume"])) * 0.10
                         ).clip(0, 1)
                         idx = sub["score"].idxmax()
