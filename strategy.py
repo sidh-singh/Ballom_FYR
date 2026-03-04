@@ -18,6 +18,7 @@ no print/log statements.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from constants import (
     Transaction,
@@ -29,6 +30,7 @@ from constants import (
     GAP_RANGE_LOW,
     GAP_RANGE_HIGH,
     ENTRY_RELATIONSHIP_STATUSES,
+    RSI_OVERSOLD,
     estimate_trade_charges,
 )
 from state_writer import log_strategy_event
@@ -241,6 +243,7 @@ class HeikenAshiMartingale:
         trend_power_list: list[tuple] | None = None,
         gap_data: dict | None = None,
         relationship_data: dict | None = None,
+        rsi_data: dict | None = None,
     ) -> tuple[OrderAction, OrderAction]:
         """
         Determine the trading action for CE and PE legs.
@@ -266,6 +269,9 @@ class HeikenAshiMartingale:
                       with {status, strength, avg_gap, delta}.
                       status: "DIVERGING" | "CONVERGING" | "PARALLEL" | "CLOSE"
                       Use relationship_data["ce_rel"]["status"] for CE relationship.
+        rsi_data    : dict with keys ce_rsi, pe_rsi — latest RSI value (float)
+                      for the CE and PE option prices.  Used to trigger martingale
+                      when RSI is oversold (< RSI_OVERSOLD from constants.py).
 
         Returns
         ───────
@@ -317,6 +323,11 @@ class HeikenAshiMartingale:
         _rel_filter = ENTRY_RELATIONSHIP_STATUSES or set()
         ce_rel_ok = (ce_rel_status in _rel_filter) if _rel_filter else True
         pe_rel_ok = (pe_rel_status in _rel_filter) if _rel_filter else True
+
+        # ── RSI data (optional — backwards compatible) ────────────────
+        _rsi = rsi_data or {}
+        ce_rsi = _rsi.get("ce_rsi", float('nan'))
+        pe_rsi = _rsi.get("pe_rsi", float('nan'))
 
         ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp, ce_avg = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
@@ -462,23 +473,16 @@ class HeikenAshiMartingale:
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={ce_charges:.2f})")
-            elif (ce_list[0] == 0) and (ce_t_list and ce_t_list[0] == 0) and ce_mg_level >= MAX_MARTINGALE_LEVEL:
-                # Martingale maxed out AND both SHAs flipped adverse → stop bleeding
-                ce_action.status = Transaction.CLOSE_BUY
-                ce_action.qty = ce_qty
-                log_strategy_event(ce_symbol, "CE", "EXIT_ADVERSE",
-                                    qty=ce_qty, pl=ce_pl,
-                                    details=f"mg_level={ce_mg_level} >= MAX={MAX_MARTINGALE_LEVEL}, "
-                                            f"Signal+Trend bearish — closing")
-            elif ce_pl < -self._fibo_threshold(ce_mg_level, hedge):
-                thr = self._fibo_threshold(ce_mg_level, hedge)
+            elif not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD and ce_mg_level < MAX_MARTINGALE_LEVEL:
+                # RSI oversold → martingale add (average down)
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
                 ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 ce_action.qty = ce_qty
                 ce_action.martingale_qty = mg_qty
-                log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY",
+                log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY_RSI",
                                     qty=mg_qty, pl=ce_pl,
-                                    details=f"P&L {ce_pl:.2f} < -{thr:.2f} (level={ce_mg_level})")
+                                    details=f"RSI={ce_rsi:.2f} < {RSI_OVERSOLD} oversold "
+                                            f"(level={ce_mg_level}, fibo_qty={mg_qty})")
 
         # ─────────────────────────────────────────────────────────────────────
         #  PE LOGIC — only when indices are BEARISH
@@ -493,23 +497,16 @@ class HeikenAshiMartingale:
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={pe_charges:.2f})")
-            elif (pe_list[0] == 0) and (pe_t_list and pe_t_list[0] == 0) and pe_mg_level >= MAX_MARTINGALE_LEVEL:
-                # Martingale maxed out AND both SHAs flipped adverse → stop bleeding
-                pe_action.status = Transaction.CLOSE_BUY
-                pe_action.qty = pe_qty
-                log_strategy_event(pe_symbol, "PE", "EXIT_ADVERSE",
-                                    qty=pe_qty, pl=pe_pl,
-                                    details=f"mg_level={pe_mg_level} >= MAX={MAX_MARTINGALE_LEVEL}, "
-                                            f"Signal+Trend bearish — closing")
-            elif pe_pl < -self._fibo_threshold(pe_mg_level, hedge):
-                thr = self._fibo_threshold(pe_mg_level, hedge)
+            elif not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD and pe_mg_level < MAX_MARTINGALE_LEVEL:
+                # RSI oversold → martingale add (average down)
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)
                 pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 pe_action.qty = pe_qty
                 pe_action.martingale_qty = mg_qty
-                log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY",
+                log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY_RSI",
                                     qty=mg_qty, pl=pe_pl,
-                                    details=f"P&L {pe_pl:.2f} < -{thr:.2f} (level={pe_mg_level})")
+                                    details=f"RSI={pe_rsi:.2f} < {RSI_OVERSOLD} oversold "
+                                            f"(level={pe_mg_level}, fibo_qty={mg_qty})")
 
         return ce_action, pe_action
 

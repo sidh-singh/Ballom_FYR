@@ -34,7 +34,7 @@ from dataclasses import asdict
 
 from fyers import Fyers
 from demo_fyers import DemoFyers
-from indicator import SmoothedHeikenAshi
+from indicator import SmoothedHeikenAshi, RSI
 from strategy import HeikenAshiMartingale
 from position_tracker import PositionTracker
 from pair_manager import PairManager
@@ -58,6 +58,7 @@ from constants import (
     INNER_LOOP_INTERVAL,
     STRATEGY_HEDGE_INDEX,
     STRATEGY_HEDGE_COMMODITY,
+    RSI_PERIOD,
 )
 from state_writer import (
     configure as configure_state_writer,
@@ -788,6 +789,12 @@ def inner_loop(
                 pe_rel = compute_sha_relationship(pe_gap)
                 idx_rel = compute_sha_relationship(idx_gap)
 
+                # ── Step B5: RSI on option prices (martingale trigger) ───
+                ce_rsi_series = RSI.calculate(ce_df, length=RSI_PERIOD)
+                pe_rsi_series = RSI.calculate(pe_df, length=RSI_PERIOD)
+                ce_rsi_val = float(ce_rsi_series.iloc[-1]) if len(ce_rsi_series) > 0 else float('nan')
+                pe_rsi_val = float(pe_rsi_series.iloc[-1]) if len(pe_rsi_series) > 0 else float('nan')
+
                 power_list = [
                     (ce_power, ce_list, ce_cross),
                     (pe_power, pe_list, pe_cross),
@@ -870,6 +877,7 @@ def inner_loop(
                     trend_power_list=trend_power_list,
                     gap_data=gap_data,
                     relationship_data=relationship_data,
+                    rsi_data={"ce_rsi": ce_rsi_val, "pe_rsi": pe_rsi_val},
                 )
 
                 # ── Step D: Execute orders ────────────────────────────────

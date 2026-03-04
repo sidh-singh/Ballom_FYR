@@ -199,3 +199,50 @@ class SmoothedHeikenAshi:
             'Low': sha_low,
             'Close': sha_close
         }, index=df.index)
+
+
+class RSI:
+    """
+    Relative Strength Index (RSI) — Wilder's smoothing.
+
+    Matches TradingView's ta.rsi() exactly:
+        change  = close - close[1]
+        gain    = ta.rma(max(change, 0), length)
+        loss    = ta.rma(max(-change, 0), length)
+        rs      = gain / loss
+        rsi     = 100 - 100 / (1 + rs)
+    """
+
+    @staticmethod
+    def calculate(
+        df: pd.DataFrame,
+        length: int = 14,
+        source_col: str = "Close",
+    ) -> pd.Series:
+        """
+        Compute RSI on a DataFrame.
+
+        Parameters
+        ──────────
+        df          : OHLCV DataFrame (must contain *source_col*).
+        length      : RSI look-back period (default 14).
+        source_col  : Column to compute RSI on (default 'Close').
+
+        Returns
+        ───────
+        pd.Series of RSI values (0–100), same index as *df*.
+        """
+        source = df[source_col].astype(float)
+        change = source.diff()
+
+        gain = change.clip(lower=0)
+        loss = (-change).clip(lower=0)
+
+        # Wilder's smoothing = RMA (same as ta.rma in Pine)
+        avg_gain = SmoothedHeikenAshi.ma(gain, length, "RMA")
+        avg_loss = SmoothedHeikenAshi.ma(loss, length, "RMA")
+
+        rs = avg_gain / avg_loss
+        rsi = 100.0 - (100.0 / (1.0 + rs))
+
+        return rsi

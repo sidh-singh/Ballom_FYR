@@ -163,6 +163,19 @@ MAX_MARTINGALE_LEVEL      = 2      # Hard cap: max martingale adds (entry + 2 ad
 # Set to None or empty set to disable the filter entirely.
 ENTRY_RELATIONSHIP_STATUSES: set[str] = {"DIVERGING"}
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+#  RSI PARAMETERS  (used for martingale trigger)
+# ═══════════════════════════════════════════════════════════════════════════════
+# RSI is computed on the option's Close price and checked each cycle.
+# When RSI drops below OVERSOLD, a martingale add (BUY_WITH_SPECIFIC_VOLUME)
+# is triggered — the option is considered "cheap" for averaging down.
+# OVERBOUGHT is provided for completeness / future use.
+
+RSI_PERIOD          = 14      # Wilder's look-back period
+RSI_OVERSOLD        = 30      # below this → trigger martingale add
+RSI_OVERBOUGHT      = 70      # above this → reserved for future use
+
 # Martingale threshold formula (SQUARED FIBONACCI):
 #   threshold[level] = fibonacci[level]² × HEDGE
 #   e.g. HEDGE=500 → barriers at -500, -2000, -4500, -12500, -32000, …
