@@ -1357,8 +1357,8 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     # (caused by app running across midnight before the _append_history fix)
     history_data = _normalize_history_dates(history_data)
 
-    # Strategy log: read for the selected date (date-partitioned files)
-    _log_date = selected_chart_date or datetime.now().strftime("%Y-%m-%d")
+    # Strategy log: ALWAYS show today's live events regardless of chart date
+    _log_date = datetime.now().strftime("%Y-%m-%d")
     log_data = _read_strategy_log_for_date(paths, _log_date)
 
     # Header badges
