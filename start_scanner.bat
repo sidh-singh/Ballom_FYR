@@ -1,31 +1,37 @@
 @echo off
 REM ================================================================================
-REM === JENKINS UNICODE FIX: Set console to UTF-8 encoding ===
+REM === SCANNER LAUNCHER — Hourly option-pair scanning service
 REM ================================================================================
-REM This ensures Unicode characters (box-drawing, special symbols) display correctly
-REM in Jenkins console output on Windows. Remove this if not needed.
+REM Usage:  start_scanner.bat [demo|live]
+REM
+REM Starts the scanner in a forever-restart loop so it automatically
+REM recovers from crashes.  Token is persisted at C:/Ballom_FYR/fyers_token.json
+REM and is reusable by any other branch (dev, dev_trader, etc.).
+REM ================================================================================
+
+REM === Jenkins Unicode fix ===
 chcp 65001 >nul 2>&1
 
-REM === Force Python to use UTF-8 encoding (CRITICAL for Unicode support) ===
+REM === Force Python to use UTF-8 encoding ===
 set PYTHONIOENCODING=utf-8
 set PYTHONUTF8=1
 
-REM === Define Python installation path explicitly ===
+REM === Python path ===
 set "PYTHON_ROOT=C:\Users\Administrator\AppData\Local\Programs\Python\Python311"
 set "PYTHON_EXE=%PYTHON_ROOT%\python.exe"
 
 echo.
 echo ================================================================================
-echo              FYERS JOB LAUNCHER
+echo              FYERS SCANNER LAUNCHER
 echo ================================================================================
 echo Python path: %PYTHON_EXE%
 echo.
 
-REM === Get mode argument (strategy parameter removed) ===
+REM === Get mode argument ===
 set "MODE=%1"
 if "%MODE%"=="" (
-	set "MODE=demo"
-	echo [INFO] Mode not specified, defaulting to DEMO mode for safety
+    set "MODE=demo"
+    echo [INFO] Mode not specified, defaulting to DEMO mode for safety
 )
 
 echo.
@@ -40,10 +46,12 @@ goto :DEMO_INFO
 :LIVE_WARNING
 echo.
 echo ********************************************************************************
-echo                            LIVE MODE ACTIVE
+echo                           LIVE MODE ACTIVE
 echo ********************************************************************************
 echo.
-echo    LIVE TRADING WITH REAL MONEY - Orders will be placed immediately!
+echo    LIVE auth — token will be written for real account!
+echo    Scanner does NOT place orders, but other branches may use
+echo    the token file for live trading.
 echo.
 echo ********************************************************************************
 echo.
@@ -51,15 +59,14 @@ goto :CONTINUE_SCRIPT
 
 :DEMO_INFO
 echo.
-echo [DEMO MODE] Paper trading - No real money at risk
-echo [DEMO MODE] Data stored at C:\AlgoTrading_Demo\
+echo [DEMO MODE] Scanner uses demo auth — no real-money risk
 echo.
 
 :CONTINUE_SCRIPT
 
-echo ============= STARTING SCRIPT =============
+echo ============= STARTING SCANNER =============
 
-REM === Check if requirements already installed ===
+REM === Install dependencies on first run ===
 if not exist ".\deps_installed.flag" goto :INSTALL_DEPS
 goto :SKIP_DEPS
 
@@ -77,14 +84,15 @@ echo Dependencies already installed, skipping...
 :RUN_SCRIPT
 echo.
 echo ================================================================================
-echo Launching job in %MODE% mode
+echo Launching scanner in %MODE% mode
 echo ================================================================================
 echo.
 
-REM === Run launcher with mode only ===
-"%PYTHON_EXE%" -X utf8 -u app.py %MODE%
-
+REM === Forever-restart loop — auto-recover from crashes ===
+:FOREVER
+"%PYTHON_EXE%" -X utf8 -u scanner_app.py %MODE%
 echo.
-echo ============= SCRIPT FINISHED =============
-pause
-
+echo [WARNING] Scanner exited unexpectedly — restarting in 10 seconds...
+echo           Press Ctrl+C to abort.
+timeout /t 10 /nobreak >nul
+goto :FOREVER
