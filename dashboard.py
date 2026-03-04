@@ -346,19 +346,19 @@ def _gap_badge(label: str, gap_pct: float, color: str) -> html.Div:
     """Compact GAP% badge for one leg (CE / PE / IDX).
 
     Colors the value based on GAP_RANGE_LOW / GAP_RANGE_HIGH:
-        - Within range → amber/neutral
-        - Below LOW → cyan (converging)
-        - Above HIGH → red/orange (diverging)
+        - Below LOW  → cyan  (gap is narrow — SHAs are close)
+        - Within range → amber (gap is healthy)
+        - Above HIGH → red   (gap is over-extended)
     """
     from constants import GAP_RANGE_LOW, GAP_RANGE_HIGH
 
     abs_gap = abs(gap_pct)
     if abs_gap < GAP_RANGE_LOW:
-        gap_color = "#00bcd4"  # cyan — converging
-        gap_label = "CONVERGING"
+        gap_color = "#00bcd4"  # cyan — narrow gap
+        gap_label = "NARROW"
     elif abs_gap > GAP_RANGE_HIGH:
-        gap_color = "#e74c3c"  # red — diverging
-        gap_label = "DIVERGING"
+        gap_color = "#e74c3c"  # red — over-extended
+        gap_label = "WIDE"
     else:
         gap_color = "#f39c12"  # amber — in range
         gap_label = "IN RANGE"
