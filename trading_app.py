@@ -103,7 +103,7 @@ def load_fyers_session(fyers_obj: Fyers) -> bool:
             with open(TOKEN_FILE, "r") as f:
                 data = json.load(f)
 
-            token = data.get("token", "")
+            token = data.get("access_token", "")
             if not token:
                 log_strategy_event("SYSTEM", "AUTH", "TOKEN_EMPTY",
                                    details=f"Attempt {attempt+1}/10 — token field empty")
