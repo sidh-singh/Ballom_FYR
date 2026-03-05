@@ -44,6 +44,7 @@ from state_writer import (
     configure as configure_state_writer,
     write_app_status,
     log_strategy_event,
+    POSITION_STATE_FILE,
 )
 
 # ── Scanner config ─────────────────────────────────────────────────────────────
@@ -72,6 +73,23 @@ def _write_json_atomic(path: Path, data: dict) -> None:
         if Path(tmp).exists():
             Path(tmp).unlink()
         raise
+
+
+def has_open_positions() -> bool:
+    """Return True if dev_trading has any open positions.
+
+    Reads position_state.json (written by the trading bot) and checks
+    overall.count_open > 0.  Returns False on any read error so the
+    scanner defaults to scanning when the file is missing or corrupt.
+    """
+    try:
+        if not POSITION_STATE_FILE.exists():
+            return False
+        with open(POSITION_STATE_FILE, "r") as f:
+            data = json.load(f)
+        return data.get("overall", {}).get("count_open", 0) > 0
+    except Exception:
+        return False
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -401,6 +419,20 @@ def main():
         current_hour = now.hour
 
         if current_hour != last_scan_hour:
+            # ── Step 3a: Skip scan if trading bot has open positions ────────
+            if has_open_positions():
+                last_scan_hour = current_hour
+                write_app_status(
+                    mode, str(current_day), status="idle",
+                    message=f"Scan skipped — open position detected ({now.strftime('%H:%M')})",
+                )
+                log_strategy_event(
+                    "SYSTEM", "SCAN", "SKIP_OPEN_POSITION",
+                    details="Position open — deferring CE/PE scan until closed",
+                )
+                sleep(POLL_INTERVAL)
+                continue
+
             in_idx_window = INDICES_START <= current_time <= INDICES_END
             in_com_window = COMMODITY_START <= current_time <= COMMODITY_END
 
