@@ -12,7 +12,7 @@ never corrupts or mixes state.
 State files
 ───────────
   app_status.json     — mode, day, trading window, scan flags
-  signal_state.json   — per-symbol SHA analysis (power, list, crossover)
+  signal_state.json   — per-symbol SHA analysis (power, list, RSI)
   position_state.json — open positions & P/L snapshot
   account_state.json  — balance, realized / unrealised P&L
   strategy_log.json   — rolling log of strategy decisions (last 200)
@@ -144,40 +144,38 @@ def write_signal_state(
     underlying: str,
     ce_power: int,
     ce_list: list,
-    ce_crossover: list,
     pe_power: int,
     pe_list: list,
-    pe_crossover: list,
     idx_power: int,
     idx_list: list,
-    idx_crossover: list,
     ce_sha_debug: list | None = None,
     pe_sha_debug: list | None = None,
     idx_sha_debug: list | None = None,
     # ── Trend SHA (longer period) ─────────────────────────────────────
     ce_trend_power: int = 0,
     ce_trend_list: list | None = None,
-    ce_trend_crossover: list | None = None,
     pe_trend_power: int = 0,
     pe_trend_list: list | None = None,
-    pe_trend_crossover: list | None = None,
     idx_trend_power: int = 0,
     idx_trend_list: list | None = None,
-    idx_trend_crossover: list | None = None,
     ce_trend_sha_debug: list | None = None,
     pe_trend_sha_debug: list | None = None,
     idx_trend_sha_debug: list | None = None,
     # ── GAP% between Signal SHA and Trend SHA ─────────────────────────
-    ce_gap: list | None = None,
-    pe_gap: list | None = None,
-    idx_gap: list | None = None,
+    ce_gap: dict | None = None,
+    pe_gap: dict | None = None,
+    idx_gap: dict | None = None,
     # ── SHA Relationship (diverging / converging / parallel / close) ───
     ce_relationship: dict | None = None,
     pe_relationship: dict | None = None,
     idx_relationship: dict | None = None,
+    # ── RSI (overbought / oversold) ───────────────────────────────────
+    ce_rsi: float | None = None,
+    pe_rsi: float | None = None,
+    idx_rsi: float | None = None,
     market_type: str = "INDEX",
 ) -> None:
-    """Upsert one symbol's signal data (signal SHA + trend SHA + GAP% + relationship)."""
+    """Upsert one symbol's signal data (signal SHA + trend SHA + GAP% + relationship + RSI)."""
     data = _read_json(SIGNAL_STATE_FILE)
     data[symbol_key] = {
         "timestamp": _ts(),
@@ -186,31 +184,32 @@ def write_signal_state(
         "underlying": underlying,
         "market_type": market_type,
         # Signal SHA
-        "ce": {"power": ce_power, "list": ce_list, "crossover": ce_crossover,
+        "ce": {"power": ce_power, "list": ce_list,
                "sha": ce_sha_debug or []},
-        "pe": {"power": pe_power, "list": pe_list, "crossover": pe_crossover,
+        "pe": {"power": pe_power, "list": pe_list,
                "sha": pe_sha_debug or []},
-        "idx": {"power": idx_power, "list": idx_list, "crossover": idx_crossover,
+        "idx": {"power": idx_power, "list": idx_list,
                 "sha": idx_sha_debug or []},
         "idx_trend": "BULLISH" if idx_list and idx_list[0] == 1 else "BEARISH",
         # Trend SHA
         "ce_trend": {"power": ce_trend_power, "list": ce_trend_list or [],
-                     "crossover": ce_trend_crossover or [],
                      "sha": ce_trend_sha_debug or []},
         "pe_trend": {"power": pe_trend_power, "list": pe_trend_list or [],
-                     "crossover": pe_trend_crossover or [],
                      "sha": pe_trend_sha_debug or []},
         "idx_trend_sha": {"power": idx_trend_power, "list": idx_trend_list or [],
-                          "crossover": idx_trend_crossover or [],
                           "sha": idx_trend_sha_debug or []},
         # GAP% between Signal and Trend SHA
-        "ce_gap": ce_gap or [],
-        "pe_gap": pe_gap or [],
-        "idx_gap": idx_gap or [],
+        "ce_gap": ce_gap or {},
+        "pe_gap": pe_gap or {},
+        "idx_gap": idx_gap or {},
         # SHA Relationship
         "ce_relationship": ce_relationship or {},
         "pe_relationship": pe_relationship or {},
         "idx_relationship": idx_relationship or {},
+        # RSI
+        "ce_rsi": round(ce_rsi, 2) if ce_rsi is not None else None,
+        "pe_rsi": round(pe_rsi, 2) if pe_rsi is not None else None,
+        "idx_rsi": round(idx_rsi, 2) if idx_rsi is not None else None,
     }
     _write_json_atomic(SIGNAL_STATE_FILE, data)
 
