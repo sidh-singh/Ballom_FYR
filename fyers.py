@@ -929,13 +929,19 @@ class Fyers:
             candles_remaining -= 1
 
         # ── call Fyers history API ─────────────────────────────────────────
+        # Options (CE/PE) must use cont_flag=0 (specific contract data).
+        # cont_flag=1 (continuous/rolled) returns the underlying futures
+        # series instead of the actual option prices.
+        sym_name = symbol.split(":")[-1] if ":" in symbol else symbol
+        is_option = sym_name.upper().endswith("CE") or sym_name.upper().endswith("PE")
+
         payload = {
             "symbol": symbol,
             "resolution": resolution,
             "date_format": "0",  # Unix timestamps
             "range_from": str(int(start_dt.timestamp())),
             "range_to": str(int(end_dt.timestamp())),
-            "cont_flag": "1",
+            "cont_flag": "0" if is_option else "1",
         }
 
         resp = self.api.history(data=payload)
