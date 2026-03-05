@@ -1,20 +1,6 @@
 {
-    "indices" : [
-        {
-            "symbol" : "NIFTY",
-            "indices": "NSE:NIFTY50-INDEX",
-            "qty_times" : 1,
-            "hedge" : 500
-        }
-    ],
+    "indices" : [],
     "commodities" : [
-        {
-            "symbol" : "SILVERM",
-            "commodity": "SILVER",
-            "qty_times" : 1,
-            "hedge" : 200,
-            "enabled": true
-        },
         {
             "symbol" : "GOLDM",
             "commodity": "GOLD",

@@ -1,12 +1,13 @@
 @echo off
 REM ================================================================================
-REM === UPDATER LAUNCHER — SHA Signal Analysis updater service
+REM === UPDATER LAUNCHER — GOLDM ONLY (dev_update_gold)
 REM ================================================================================
 REM Usage:  start_updater.bat [demo|live]
 REM
 REM Reads Fyers token from C:/Ballom_FYR/fyers_token.json (written by dev_scanner).
-REM Continuously computes SHA signals for all active pairs and writes
+REM Continuously computes SHA signals for GOLDM only and writes
 REM signal_state.json for the dev branch dashboard.
+REM Sibling branches: dev_update_nifty (NIFTY), dev_update_silver (SILVERM)
 REM
 REM Auto-restarts on crash via forever loop.
 REM ================================================================================
@@ -24,7 +25,7 @@ set "PYTHON_EXE=%PYTHON_ROOT%\python.exe"
 
 echo.
 echo ================================================================================
-echo              FYERS SHA UPDATER LAUNCHER
+echo              FYERS SHA UPDATER LAUNCHER [GOLDM]
 echo ================================================================================
 echo Python path: %PYTHON_EXE%
 echo.
