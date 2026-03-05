@@ -13,7 +13,7 @@ Outer Loop (runs forever):
 
 Inner Loop (blocking, per symbol):
   Step A — Fetch history for CE, PE, underlying
-  Step B — Compute SHA + power/list/crossover for all three
+  Step B — Compute SHA + power/list for all three
   Step C — Strategy.evaluate() → get OrderActions
   Step D — Strategy.execute_orders() → place trades
   Step E — Monitor positions; if all closed → break back to outer loop
@@ -420,10 +420,9 @@ def get_symbol_details(
     Compute Smoothed Heiken-Ashi on *raw_df* (OHLCV) and derive:
         lt_symbol_power  — count of bullish candles in last 7
         lt_symbol_list   — [1|0, ...] most-recent-first
-        crossover        — price vs SHA position [-3..-1, 1..3]
         sha_debug        — last 7 SHA OHLC dicts (most-recent-first) for diagnostics
 
-    Returns (lt_symbol_power, lt_symbol_list, crossover, sha_debug).
+    Returns (lt_symbol_power, lt_symbol_list, sha_debug).
     """
     import math
 
@@ -438,7 +437,6 @@ def get_symbol_details(
     threshold = 0
     lt_symbol_power = 0
     lt_symbol_list = []
-    crossover = []
     sha_debug = []
 
     for i in range(-1, -8, -1):
@@ -450,7 +448,6 @@ def get_symbol_details(
         # Guard against NaN SHA values (insufficient candles)
         if math.isnan(sha_o) or math.isnan(sha_h) or math.isnan(sha_l) or math.isnan(sha_c):
             lt_symbol_list.append(0)
-            crossover.append(-2)
             sha_debug.append({
                 "ts": str(raw_df["Timestamp"].iloc[i]) if "Timestamp" in raw_df.columns else "",
                 "O": 0, "H": 0, "L": 0, "C": 0, "dir": "NaN",
@@ -467,24 +464,6 @@ def get_symbol_details(
         lt_symbol_list.append(lt_sha_diff)
         lt_symbol_power += lt_sha_diff
 
-        ct_p_high = raw_df["High"].iloc[i]
-        ct_p_low = raw_df["Low"].iloc[i]
-
-        if lt_sha_diff == 1:
-            if ct_p_low >= sha_h:
-                crossover.append(3)
-            elif ct_p_high <= sha_l:
-                crossover.append(1)
-            else:
-                crossover.append(2)
-        else:
-            if ct_p_high <= sha_l:
-                crossover.append(-3)
-            elif ct_p_low >= sha_h:
-                crossover.append(-1)
-            else:
-                crossover.append(-2)
-
         # ── diagnostic: capture SHA OHLC + timestamp for dashboard ────
         ts = str(raw_df["Timestamp"].iloc[i]) if "Timestamp" in raw_df.columns else ""
         sha_debug.append({
@@ -496,7 +475,7 @@ def get_symbol_details(
             "dir": "BULL" if lt_sha_diff == 1 else "BEAR",
         })
 
-    return lt_symbol_power, lt_symbol_list, crossover, sha_debug
+    return lt_symbol_power, lt_symbol_list, sha_debug
 
 
 def get_trend_details(
@@ -507,7 +486,7 @@ def get_trend_details(
     """
     Compute Trend SHA (longer-period) on *raw_df* and derive the same
     outputs as get_symbol_details:
-        power, list, crossover, sha_debug.
+        power, list, sha_debug.
 
     Uses the same logic but with a longer SHA length (default 11)
     for trend identification.
@@ -794,14 +773,14 @@ def inner_loop(
                 )
 
                 # ── Step B: SHA + signal details ──────────────────────────
-                ce_power, ce_list, ce_cross, ce_sha_dbg = get_symbol_details(ce_df)
-                pe_power, pe_list, pe_cross, pe_sha_dbg = get_symbol_details(pe_df)
-                idx_power, idx_list, idx_cross, idx_sha_dbg = get_symbol_details(idx_df)
+                ce_power, ce_list, ce_sha_dbg = get_symbol_details(ce_df)
+                pe_power, pe_list, pe_sha_dbg = get_symbol_details(pe_df)
+                idx_power, idx_list, idx_sha_dbg = get_symbol_details(idx_df)
 
                 # ── Step B2: Trend SHA (longer period) ────────────────────
-                ce_t_power, ce_t_list, ce_t_cross, ce_t_sha_dbg = get_trend_details(ce_df)
-                pe_t_power, pe_t_list, pe_t_cross, pe_t_sha_dbg = get_trend_details(pe_df)
-                idx_t_power, idx_t_list, idx_t_cross, idx_t_sha_dbg = get_trend_details(idx_df)
+                ce_t_power, ce_t_list, ce_t_sha_dbg = get_trend_details(ce_df)
+                pe_t_power, pe_t_list, pe_t_sha_dbg = get_trend_details(pe_df)
+                idx_t_power, idx_t_list, idx_t_sha_dbg = get_trend_details(idx_df)
 
                 # ── Step B3: GAP% between Signal SHA and Trend SHA ────────
                 ce_gap = compute_sha_gap(ce_sha_dbg, ce_t_sha_dbg)
@@ -816,20 +795,27 @@ def inner_loop(
                 # ── Step B5: RSI on option prices (martingale trigger) ───
                 ce_rsi_series = RSI.calculate(ce_df, length=RSI_PERIOD)
                 pe_rsi_series = RSI.calculate(pe_df, length=RSI_PERIOD)
+                idx_rsi_series = RSI.calculate(idx_df, length=RSI_PERIOD)
                 ce_rsi_val = float(ce_rsi_series.iloc[-1]) if len(ce_rsi_series) > 0 else float('nan')
                 pe_rsi_val = float(pe_rsi_series.iloc[-1]) if len(pe_rsi_series) > 0 else float('nan')
+                idx_rsi_val = float(idx_rsi_series.iloc[-1]) if len(idx_rsi_series) > 0 else float('nan')
+
+                import math as _m
+                ce_rsi_out = None if _m.isnan(ce_rsi_val) else ce_rsi_val
+                pe_rsi_out = None if _m.isnan(pe_rsi_val) else pe_rsi_val
+                idx_rsi_out = None if _m.isnan(idx_rsi_val) else idx_rsi_val
 
                 power_list = [
-                    (ce_power, ce_list, ce_cross),
-                    (pe_power, pe_list, pe_cross),
-                    (idx_power, idx_list, idx_cross),
+                    (ce_power, ce_list),
+                    (pe_power, pe_list),
+                    (idx_power, idx_list),
                 ]
 
                 # Trend power list (same structure, just from trend SHA)
                 trend_power_list = [
-                    (ce_t_power, ce_t_list, ce_t_cross),
-                    (pe_t_power, pe_t_list, pe_t_cross),
-                    (idx_t_power, idx_t_list, idx_t_cross),
+                    (ce_t_power, ce_t_list),
+                    (pe_t_power, pe_t_list),
+                    (idx_t_power, idx_t_list),
                 ]
 
                 # GAP data for strategy (most-recent gap% per leg)
@@ -847,26 +833,20 @@ def inner_loop(
                     underlying=underlying,
                     ce_power=ce_power,
                     ce_list=ce_list,
-                    ce_crossover=ce_cross,
                     pe_power=pe_power,
                     pe_list=pe_list,
-                    pe_crossover=pe_cross,
                     idx_power=idx_power,
                     idx_list=idx_list,
-                    idx_crossover=idx_cross,
                     ce_sha_debug=ce_sha_dbg,
                     pe_sha_debug=pe_sha_dbg,
                     idx_sha_debug=idx_sha_dbg,
                     # Trend SHA data
                     ce_trend_power=ce_t_power,
                     ce_trend_list=ce_t_list,
-                    ce_trend_crossover=ce_t_cross,
                     pe_trend_power=pe_t_power,
                     pe_trend_list=pe_t_list,
-                    pe_trend_crossover=pe_t_cross,
                     idx_trend_power=idx_t_power,
                     idx_trend_list=idx_t_list,
-                    idx_trend_crossover=idx_t_cross,
                     ce_trend_sha_debug=ce_t_sha_dbg,
                     pe_trend_sha_debug=pe_t_sha_dbg,
                     idx_trend_sha_debug=idx_t_sha_dbg,
@@ -878,6 +858,10 @@ def inner_loop(
                     ce_relationship=ce_rel,
                     pe_relationship=pe_rel,
                     idx_relationship=idx_rel,
+                    # RSI data
+                    ce_rsi=ce_rsi_out,
+                    pe_rsi=pe_rsi_out,
+                    idx_rsi=idx_rsi_out,
                     market_type=market_type,
                 )
 

@@ -8,8 +8,8 @@ Key rules
 • Indices direction determines which leg is active:
     - Indices BULLISH (lt_list[0] == 1) → only CE trades
     - Indices BEARISH (lt_list[0] == 0) → only PE trades
-• Entry: strong crossover (±3) aligned with SHA momentum
-• Exit:  profit target OR weak / adverse crossover
+• Entry: SHA momentum aligned with trend + RSI confirmation
+• Exit:  profit target OR adverse signal
 • Martingale: fibonacci-based position doubling on deep loss
 
 All strategy decisions are logged to JSON state files —
@@ -253,13 +253,13 @@ class HeikenAshiMartingale:
         ce_symbol   : e.g. "NFO:NIFTY26FEB26000CE"
         pe_symbol   : e.g. "NFO:NIFTY26FEB25800PE"
         base_qty    : lot size × qty_times (from JSON)
-        power_list  : [(ce_power, ce_list, ce_cross),
-                       (pe_power, pe_list, pe_cross),
-                       (idx_power, idx_list, idx_cross)]
+        power_list  : [(ce_power, ce_list),
+                       (pe_power, pe_list),
+                       (idx_power, idx_list)]
         position_df : DataFrame from fyers.position()
         hedge       : ₹ profit target for this pair (default: index HEDGE)
         trend_power_list : same structure as power_list but from Trend SHA (length 11)
-                           [(ce_t_power, ce_t_list, ce_t_cross), ...]
+                           [(ce_t_power, ce_t_list), ...]
         gap_data    : dict with keys ce_gap, pe_gap, idx_gap — each a list of
                       {gap_pct, signal_mid, trend_mid} dicts (most-recent first).
                       Use gap_data["ce_gap"][0]["gap_pct"] for latest CE gap%.
@@ -277,19 +277,18 @@ class HeikenAshiMartingale:
         ───────
         (ce_action, pe_action) — OrderAction dataclasses
         """
-        ce_power, ce_list, ce_cross = power_list[0]
-        pe_power, pe_list, pe_cross = power_list[1]
-        idx_power, idx_list, idx_cross = power_list[2]
+        ce_power, ce_list = power_list[0]
+        pe_power, pe_list = power_list[1]
+        idx_power, idx_list = power_list[2]
 
         # ── Trend SHA data (optional — backwards compatible) ──────────
         if trend_power_list:
-            ce_t_power, ce_t_list, ce_t_cross = trend_power_list[0]
-            pe_t_power, pe_t_list, pe_t_cross = trend_power_list[1]
-            idx_t_power, idx_t_list, idx_t_cross = trend_power_list[2]
+            ce_t_power, ce_t_list = trend_power_list[0]
+            pe_t_power, pe_t_list = trend_power_list[1]
+            idx_t_power, idx_t_list = trend_power_list[2]
         else:
             ce_t_power = pe_t_power = idx_t_power = 0
             ce_t_list = pe_t_list = idx_t_list = []
-            ce_t_cross = pe_t_cross = idx_t_cross = []
 
         # ── GAP% data (optional — backwards compatible) ───────────────
         # gap_data["ce_gap"] is a dict with "gap_pct" (mean-based).
@@ -394,7 +393,6 @@ class HeikenAshiMartingale:
             ce_symbol.split(":")[1] if ":" in ce_symbol else ce_symbol,
             "EVAL", "ANALYSIS",
             details=f"Idx={idx_trend} IdxTrend={idx_trend_sha} "
-                    f"CE_cross={ce_cross[0]} PE_cross={pe_cross[0]} "
                     f"CE_pwr={ce_power}/7 PE_pwr={pe_power}/7 "
                     f"GAP: CE={ce_gap_pct:.2f}% PE={pe_gap_pct:.2f}% IDX={idx_gap_pct:.2f}%"
                     f" | REL: CE={ce_rel_status} PE={pe_rel_status} IDX={idx_rel_status}"
@@ -448,7 +446,6 @@ class HeikenAshiMartingale:
             # ── entry (Alcadeias-style) ───────────────────────────────
             # Both Signal SHA and Trend SHA must agree on direction,
             # IDX must confirm, and GAP% must be in range.
-            # Crossover is still computed but NOT used in entry condition.
             if (ce_list[0] == 1) and (idx_list[0] == 1) and (ce_t_list and ce_t_list[0] == 1) and ce_gap_in_range and ce_rel_ok:
                 ce_action.status = Transaction.BUY
                 log_strategy_event(ce_symbol, "CE", "ENTRY_BUY",
