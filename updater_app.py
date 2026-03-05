@@ -32,6 +32,7 @@ Token sharing:  reads token from C:/Ballom_FYR/fyers_token.json
 import sys
 import json
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time as dt_time
 from pathlib import Path
 from time import sleep
@@ -262,10 +263,12 @@ def compute_sha_gap(signal_sha_debug: list, trend_sha_debug: list) -> list:
         trd_range = abs(trd_h - trd_l)
         avg_range = (sig_range + trd_range) / 2
 
-        if avg_range == 0:
-            gap_pct = 0.0
-        else:
-            gap_pct = ((sig_mid - trd_mid) / avg_range) * 100
+        # Floor: prevent division by near-zero when SHA candles are flat.
+        # Use 0.1% of the trend midpoint as the minimum meaningful range.
+        min_range = abs(trd_mid) * 0.001 if trd_mid != 0 else 1e-6
+        avg_range = max(avg_range, min_range)
+
+        gap_pct = ((sig_mid - trd_mid) / avg_range) * 100
 
         gap_list.append({
             "gap_pct": round(gap_pct, 2),
@@ -348,25 +351,22 @@ def process_symbol(
     Returns True on success, False on error.
     """
     try:
-        # ── Fetch historical OHLCV ────────────────────────────────────
-        ce_df = fyers.fetch_historical_data(
-            ce_symbol, timeframe, candles,
-            market_type=market_type,
-            holidays=holidays,
-            special_sessions=special_sessions,
-        )
-        pe_df = fyers.fetch_historical_data(
-            pe_symbol, timeframe, candles,
-            market_type=market_type,
-            holidays=holidays,
-            special_sessions=special_sessions,
-        )
-        idx_df = fyers.fetch_historical_data(
-            underlying, timeframe, candles,
-            market_type=market_type,
-            holidays=holidays,
-            special_sessions=special_sessions,
-        )
+        # ── Fetch historical OHLCV (CE, PE, IDX in parallel) ──────────
+        def _fetch(sym):
+            return fyers.fetch_historical_data(
+                sym, timeframe, candles,
+                market_type=market_type,
+                holidays=holidays,
+                special_sessions=special_sessions,
+            )
+
+        with ThreadPoolExecutor(max_workers=3) as pool:
+            fut_ce = pool.submit(_fetch, ce_symbol)
+            fut_pe = pool.submit(_fetch, pe_symbol)
+            fut_idx = pool.submit(_fetch, underlying)
+            ce_df = fut_ce.result()
+            pe_df = fut_pe.result()
+            idx_df = fut_idx.result()
 
         # ── Signal SHA (length=3) ─────────────────────────────────────
         ce_power, ce_list, ce_cross, ce_sha_dbg = get_symbol_details(ce_df)
