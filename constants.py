@@ -71,7 +71,7 @@ DEFAULT_CANDLES     = 500
 # When |GAP%| exceeds HIGH, signal is over-extended from trend.
 # When |GAP%| is below LOW, signal is converging with trend (range-bound).
 
-GAP_RANGE_LOW       = 2.0     # % — below this, signal is too close to trend
+GAP_RANGE_LOW       = 0.8     # % — below this, signal is too close to trend
 GAP_RANGE_HIGH      = 16.0     # % — above this, signal is diverging from trend
 
 
