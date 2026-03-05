@@ -75,8 +75,8 @@ DEFAULT_CANDLES     = 500
 # When |GAP%| exceeds HIGH, signal is over-extended from trend.
 # When |GAP%| is below LOW, signal is converging with trend (range-bound).
 
-GAP_RANGE_LOW       = 1.0     # % of trend price — below this, SHAs nearly overlapping
-GAP_RANGE_HIGH      = 5.0     # % of trend price — above this, over-extended
+GAP_RANGE_LOW       = 0.5     # % of trend price — below this, SHAs nearly overlapping
+GAP_RANGE_HIGH      = 2.5     # % of trend price — above this, over-extended
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
