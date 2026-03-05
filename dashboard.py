@@ -4,7 +4,8 @@ dashboard.py — Live Dash / Plotly dashboard for Ballom_FYR.
 Reads JSON state files from C:/Ballom_FYR/state/<mode>/ and displays:
   * Account balance, realized / unrealized P&L
   * Open positions table
-  * SHA signal strength, power, list, crossover per symbol
+  * SHA signal strength, power, list per symbol
+  * RSI overbought/oversold state per symbol
   * Strategy decision log (rolling)
 
 Launch:
@@ -251,58 +252,7 @@ def _kpi_card(title: str, value: str, color: str = None,
     )
 
 
-def _crossover_dots(cross_list: list, max_items: int = 7) -> html.Div:
-    """Crossover as circle dots with green/red intensity shading + fade."""
-    green_map = {1: "#4de8c8", 2: "#00d2a0", 3: "#009d7a"}
-    red_map   = {1: "#ee7b6e", 2: "#e74c3c", 3: "#c0392b"}
-    dots = []
-    for i in range(max_items):
-        v = cross_list[i] if i < len(cross_list) else 0
-        if v > 0:
-            c = green_map.get(min(abs(v), 3), "#4de8c8")
-        elif v < 0:
-            c = red_map.get(min(abs(v), 3), "#ee7b6e")
-        else:
-            c = "rgba(255,255,255,0.06)"
-        opacity = max(0.35, 1.0 - (i * 0.09))
-        dots.append(html.Span(style={
-            "display": "inline-block", "width": "10px", "height": "10px",
-            "borderRadius": "50%", "background": c,
-            "marginRight": "3px", "opacity": str(opacity),
-        }))
-    return html.Div(dots, style={"display": "inline-flex", "alignItems": "center"})
 
-
-def _cross_power_bar(cross_list: list, max_items: int = 7) -> html.Div:
-    """Power bar for crossover -- segments colored per value intensity."""
-    green_map = {1: "#4de8c8", 2: "#00d2a0", 3: "#009d7a"}
-    red_map   = {1: "#ee7b6e", 2: "#e74c3c", 3: "#c0392b"}
-    bull_count = sum(1 for v in cross_list[:max_items] if v > 0)
-    segs = []
-    for i in range(max_items):
-        if i < len(cross_list):
-            v = cross_list[i]
-            if v > 0:
-                c = green_map.get(v, "#81c784")
-            elif v < 0:
-                c = red_map.get(abs(v), "#e57373")
-            else:
-                c = "rgba(255,255,255,0.06)"
-        else:
-            c = "rgba(255,255,255,0.06)"
-        segs.append(html.Span(style={
-            "display": "inline-block", "width": "8px", "height": "16px",
-            "borderRadius": "3px", "background": c, "marginRight": "2px",
-        }))
-    p_color = "#00d2a0" if bull_count >= 5 else "#f39c12" if bull_count >= 3 else "#e74c3c"
-    return html.Div([
-        *segs,
-        html.Span(f" {bull_count}", style={
-            "fontSize": "0.75rem", "fontWeight": "700", "marginLeft": "4px",
-            "color": p_color if bull_count > 0 else COLORS["text_dim"],
-            "fontFamily": "'JetBrains Mono', monospace",
-        }),
-    ], style={"display": "inline-flex", "alignItems": "center"})
 
 
 def _power_bar(power: int, max_power: int = 7) -> html.Div:
@@ -451,13 +401,146 @@ def _relationship_badge(label: str, rel_data: dict, color: str) -> html.Div:
     ])
 
 
+def _combined_analysis_badge(label: str, gap_pct: float, rel_data: dict, color: str) -> html.Div:
+    """Combined GAP% + SHA Relationship badge for one leg (CE / PE / IDX)."""
+    from constants import GAP_RANGE_LOW, GAP_RANGE_HIGH
+
+    # GAP% coloring
+    abs_gap = abs(gap_pct)
+    if abs_gap < GAP_RANGE_LOW:
+        gap_color = "#00bcd4"
+        gap_label = "NARROW"
+    elif abs_gap > GAP_RANGE_HIGH:
+        gap_color = "#e74c3c"
+        gap_label = "WIDE"
+    else:
+        gap_color = "#f39c12"
+        gap_label = "IN RANGE"
+    sign = "+" if gap_pct > 0 else ""
+
+    # Relationship
+    status = rel_data.get("status", "UNKNOWN") if isinstance(rel_data, dict) else "UNKNOWN"
+    strength = rel_data.get("strength", 0.0) if isinstance(rel_data, dict) else 0.0
+    delta = rel_data.get("delta", 0.0) if isinstance(rel_data, dict) else 0.0
+
+    STATUS_STYLES = {
+        "DIVERGING":  {"color": "#e74c3c", "icon": "\u2197\u2199"},
+        "CONVERGING": {"color": "#00bcd4", "icon": "\u2198\u2197"},
+        "PARALLEL":   {"color": "#f39c12", "icon": "\u2192\u2192"},
+        "CLOSE":      {"color": "#00d2a0", "icon": "\u2248"},
+        "UNKNOWN":    {"color": "#4e5878", "icon": "\u2014"},
+    }
+    st = STATUS_STYLES.get(status, STATUS_STYLES["UNKNOWN"])
+
+    # Strength bar (3 segments)
+    bar_segments = []
+    for i in range(3):
+        threshold = (i + 1) / 3
+        filled = strength >= threshold
+        bar_segments.append(
+            html.Span(style={
+                "display": "inline-block", "width": "14px", "height": "4px",
+                "borderRadius": "2px", "marginRight": "2px",
+                "background": st["color"] if filled else "rgba(255,255,255,0.08)",
+                "opacity": "1" if filled else "0.3",
+            })
+        )
+
+    rel_sign = "+" if delta > 0 else ""
+
+    return html.Div(style={
+        "background": "rgba(0,0,0,0.2)",
+        "borderRadius": "8px",
+        "padding": "10px 10px",
+        "textAlign": "center",
+        "border": f"1px solid {color}33",
+    }, children=[
+        # Label
+        html.Div(label, style={
+            "fontSize": "0.6rem", "fontWeight": "700",
+            "color": color, "letterSpacing": "0.5px", "marginBottom": "6px"}),
+        # GAP% value
+        html.Div(f"{sign}{gap_pct:.2f}%", style={
+            "fontSize": "1.1rem", "fontWeight": "800",
+            "color": gap_color, "fontFamily": "'JetBrains Mono', monospace"}),
+        html.Div(gap_label, style={
+            "fontSize": "0.5rem", "fontWeight": "600",
+            "color": gap_color, "letterSpacing": "0.5px",
+            "marginTop": "2px", "opacity": "0.8"}),
+        # Divider
+        html.Hr(style={
+            "border": "none",
+            "borderTop": f"1px solid {COLORS['divider']}",
+            "margin": "6px 0"}),
+        # Relationship icon + status
+        html.Div(f"{st['icon']}", style={
+            "fontSize": "0.9rem", "marginBottom": "2px"}),
+        html.Div(status, style={
+            "fontSize": "0.65rem", "fontWeight": "800",
+            "color": st["color"], "fontFamily": "'JetBrains Mono', monospace",
+            "letterSpacing": "0.5px"}),
+        html.Div(bar_segments, style={
+            "display": "flex", "justifyContent": "center",
+            "marginTop": "4px", "marginBottom": "2px"}),
+        html.Div(f"\u0394 {rel_sign}{delta:.2f}%", style={
+            "fontSize": "0.5rem", "fontWeight": "600",
+            "color": COLORS["text_dim"], "fontFamily": "'JetBrains Mono', monospace",
+            "marginTop": "2px"}),
+    ])
+
+
+def _rsi_badge(label: str, rsi_value, color: str) -> html.Div:
+    """RSI badge showing overbought/oversold/neutral state for one leg."""
+    from constants import RSI_OVERSOLD, RSI_OVERBOUGHT
+
+    if rsi_value is None:
+        rsi_display = "\u2014"
+        rsi_color = COLORS["text_dim"]
+        rsi_label = "NO DATA"
+        rsi_bg = "rgba(78,88,120,0.08)"
+    else:
+        rsi_val = float(rsi_value)
+        rsi_display = f"{rsi_val:.1f}"
+        if rsi_val >= RSI_OVERBOUGHT:
+            rsi_color = "#e74c3c"
+            rsi_label = "OVERBOUGHT"
+            rsi_bg = "rgba(231,76,60,0.10)"
+        elif rsi_val <= RSI_OVERSOLD:
+            rsi_color = "#00d2a0"
+            rsi_label = "OVERSOLD"
+            rsi_bg = "rgba(0,210,160,0.10)"
+        else:
+            rsi_color = "#f39c12"
+            rsi_label = "NEUTRAL"
+            rsi_bg = "rgba(243,156,18,0.08)"
+
+    return html.Div(style={
+        "background": rsi_bg,
+        "borderRadius": "8px",
+        "padding": "8px 10px",
+        "textAlign": "center",
+        "border": f"1px solid {color}33",
+    }, children=[
+        html.Div(label, style={
+            "fontSize": "0.6rem", "fontWeight": "700",
+            "color": color, "letterSpacing": "0.5px", "marginBottom": "4px"}),
+        html.Div(rsi_display, style={
+            "fontSize": "1.1rem", "fontWeight": "800",
+            "color": rsi_color, "fontFamily": "'JetBrains Mono', monospace"}),
+        html.Div(rsi_label, style={
+            "fontSize": "0.5rem", "fontWeight": "600",
+            "color": rsi_color, "letterSpacing": "0.5px",
+            "marginTop": "2px", "opacity": "0.8"}),
+    ])
+
+
 def _signal_row(label: str, icon: str, color: str,
-                power: int, lst: list, cross_list: list) -> html.Div:
-    """One compact row for CE / PE / IDX -- 4-column grid."""
+                power: int, lst: list) -> html.Div:
+    """One compact row for CE / PE / IDX -- 3-column grid."""
     return html.Div(
         style={
             "display": "grid",
-            "gridTemplateColumns": "64px 1fr 1fr 1fr",
+            "gridTemplateColumns": "64px 1fr 1fr",
             "gap": "8px", "alignItems": "center",
             "padding": "8px 0",
         },
@@ -467,7 +550,6 @@ def _signal_row(label: str, icon: str, color: str,
             }),
             _power_bar(power),
             _list_dots(lst),
-            _cross_power_bar(cross_list),
         ],
     )
 
@@ -1579,17 +1661,11 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             ce = sig.get("ce", {})
             pe = sig.get("pe", {})
             idx = sig.get("idx", {})
-            ce_cross = ce.get("crossover", [])
-            pe_cross = pe.get("crossover", [])
-            idx_cross = idx.get("crossover", [])
 
             # Trend SHA data
             ce_t = sig.get("ce_trend", {})
             pe_t = sig.get("pe_trend", {})
             idx_t = sig.get("idx_trend_sha", {})
-            ce_t_cross = ce_t.get("crossover", [])
-            pe_t_cross = pe_t.get("crossover", [])
-            idx_t_cross = idx_t.get("crossover", [])
 
             # GAP% data
             ce_gap_data = sig.get("ce_gap", {})
@@ -1666,23 +1742,22 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             "color": COLORS["text_dim"], "letterSpacing": "0.5px"}),
                     ]),
                     html.Div(style={
-                        "display": "grid", "gridTemplateColumns": "64px 1fr 1fr 1fr",
+                        "display": "grid", "gridTemplateColumns": "64px 1fr 1fr",
                         "gap": "8px", "padding": "6px 18px 0",
                     }, children=[
                         html.Span(""),
                         html.Span("POWER", style=col_hdr),
                         html.Span("CANDLES", style=col_hdr),
-                        html.Span("CROSSOVER", style=col_hdr),
                     ]),
                     html.Div(style={"padding": "0 18px 12px"}, children=[
                         _signal_row("CE", "\U0001f535", "#5dade2",
-                                    ce.get("power", 0), ce.get("list", []), ce_cross),
+                                    ce.get("power", 0), ce.get("list", [])),
                         row_divider,
                         _signal_row("PE", "\U0001f534", "#ff6b6b",
-                                    pe.get("power", 0), pe.get("list", []), pe_cross),
+                                    pe.get("power", 0), pe.get("list", [])),
                         row_divider,
                         _signal_row("IDX", "\U0001f4ca", "#ffd93d",
-                                    idx.get("power", 0), idx.get("list", []), idx_cross),
+                                    idx.get("power", 0), idx.get("list", [])),
                     ]),
                     # ── Trend SHA section ─────────────────────────────────
                     html.Div(style={
@@ -1698,31 +1773,30 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                                 "color": COLORS["text_dim"], "letterSpacing": "0.5px"}),
                         ]),
                         html.Div(style={
-                            "display": "grid", "gridTemplateColumns": "64px 1fr 1fr 1fr",
+                            "display": "grid", "gridTemplateColumns": "64px 1fr 1fr",
                             "gap": "8px", "padding": "6px 0 0",
                         }, children=[
                             html.Span(""),
                             html.Span("POWER", style=col_hdr),
                             html.Span("CANDLES", style=col_hdr),
-                            html.Span("CROSSOVER", style=col_hdr),
                         ]),
                         html.Div(style={"padding": "0 0 10px"}, children=[
                             _signal_row("CE", "\U0001f535", "#5dade2",
-                                        ce_t.get("power", 0), ce_t.get("list", []), ce_t_cross),
+                                        ce_t.get("power", 0), ce_t.get("list", [])),
                             row_divider,
                             _signal_row("PE", "\U0001f534", "#ff6b6b",
-                                        pe_t.get("power", 0), pe_t.get("list", []), pe_t_cross),
+                                        pe_t.get("power", 0), pe_t.get("list", [])),
                             row_divider,
                             _signal_row("IDX", "\U0001f4ca", "#ffd93d",
-                                        idx_t.get("power", 0), idx_t.get("list", []), idx_t_cross),
+                                        idx_t.get("power", 0), idx_t.get("list", [])),
                         ]),
                     ]),
-                    # ── GAP% section ──────────────────────────────────────
+                    # ── SHA Analysis (Gap% + Relationship combined) ───────
                     html.Div(style={
                         "padding": "10px 18px 12px",
                         "borderTop": f"1px solid {COLORS['divider']}",
                     }, children=[
-                        html.Span("\U0001f4cf GAP%  (Signal vs Trend SHA)", style={
+                        html.Span("\U0001f50d SHA ANALYSIS  (Signal \u2194 Trend)", style={
                             "fontSize": "0.72rem", "fontWeight": "700",
                             "color": COLORS["text_dim"], "letterSpacing": "0.5px",
                             "display": "block", "marginBottom": "8px"}),
@@ -1730,18 +1804,17 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             "display": "grid", "gridTemplateColumns": "1fr 1fr 1fr",
                             "gap": "8px",
                         }, children=[
-                            _gap_badge("CE", ce_gap_pct, "#5dade2"),
-                            _gap_badge("PE", pe_gap_pct, "#ff6b6b"),
-                            _gap_badge("IDX", idx_gap_pct, "#ffd93d"),
+                            _combined_analysis_badge("CE", ce_gap_pct, ce_rel, "#5dade2"),
+                            _combined_analysis_badge("PE", pe_gap_pct, pe_rel, "#ff6b6b"),
+                            _combined_analysis_badge("IDX", idx_gap_pct, idx_rel, "#ffd93d"),
                         ]),
                     ]),
-
-                    # ── SHA Relationship section ─────────────────────────────
+                    # ── RSI section ───────────────────────────────────────
                     html.Div(style={
                         "padding": "10px 18px 12px",
                         "borderTop": f"1px solid {COLORS['divider']}",
                     }, children=[
-                        html.Span("\U0001f504 SHA RELATIONSHIP  (Signal \u2194 Trend)", style={
+                        html.Span("\U0001f4c9 RSI (Relative Strength Index)", style={
                             "fontSize": "0.72rem", "fontWeight": "700",
                             "color": COLORS["text_dim"], "letterSpacing": "0.5px",
                             "display": "block", "marginBottom": "8px"}),
@@ -1749,9 +1822,9 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             "display": "grid", "gridTemplateColumns": "1fr 1fr 1fr",
                             "gap": "8px",
                         }, children=[
-                            _relationship_badge("CE", ce_rel, "#5dade2"),
-                            _relationship_badge("PE", pe_rel, "#ff6b6b"),
-                            _relationship_badge("IDX", idx_rel, "#ffd93d"),
+                            _rsi_badge("CE", sig.get("ce_rsi", None), "#5dade2"),
+                            _rsi_badge("PE", sig.get("pe_rsi", None), "#ff6b6b"),
+                            _rsi_badge("IDX", sig.get("idx_rsi", None), "#ffd93d"),
                         ]),
                     ]),
 
@@ -1798,41 +1871,25 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                                 html.Span("\u22655", style={"fontSize": "0.55rem", "color": COLORS["text_dim"]}),
                             ]),
                         ]),
-                        # Row 2: Crossover — Bullish + Bearish strength
+                        # Row 2: RSI zones
                         html.Div(style={
                             "display": "flex", "flexWrap": "wrap",
                             "gap": "12px", "alignItems": "center",
                         }, children=[
                             html.Div(style={"display": "inline-flex", "gap": "5px", "alignItems": "center"}, children=[
-                                html.Span("Crossover Bull:", style={"fontSize": "0.6rem", "fontWeight": "600",
-                                                                     "color": COLORS["text_dim"]}),
+                                html.Span("RSI:", style={"fontSize": "0.6rem", "fontWeight": "600",
+                                                          "color": COLORS["text_dim"]}),
                                 html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
-                                                 "borderRadius": "50%", "background": "#4de8c8", "marginRight": "1px"}),
-                                html.Span("Weak", style={"fontSize": "0.55rem", "color": COLORS["text_dim"],
+                                                 "borderRadius": "50%", "background": "#e74c3c", "marginRight": "1px"}),
+                                html.Span("Overbought (\u226570)", style={"fontSize": "0.55rem", "color": COLORS["text_dim"],
                                                           "marginRight": "4px"}),
                                 html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
                                                  "borderRadius": "50%", "background": "#00d2a0", "marginRight": "1px"}),
-                                html.Span("Mid", style={"fontSize": "0.55rem", "color": COLORS["text_dim"],
-                                                         "marginRight": "4px"}),
-                                html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
-                                                 "borderRadius": "50%", "background": "#009d7a", "marginRight": "1px"}),
-                                html.Span("Strong", style={"fontSize": "0.55rem", "color": COLORS["text_dim"]}),
-                            ]),
-                            html.Span("\u2502", style={"color": COLORS["text_muted"], "fontSize": "0.7rem"}),
-                            html.Div(style={"display": "inline-flex", "gap": "5px", "alignItems": "center"}, children=[
-                                html.Span("Crossover Bear:", style={"fontSize": "0.6rem", "fontWeight": "600",
-                                                                     "color": COLORS["text_dim"]}),
-                                html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
-                                                 "borderRadius": "50%", "background": "#ee7b6e", "marginRight": "1px"}),
-                                html.Span("Weak", style={"fontSize": "0.55rem", "color": COLORS["text_dim"],
+                                html.Span("Oversold (\u226430)", style={"fontSize": "0.55rem", "color": COLORS["text_dim"],
                                                           "marginRight": "4px"}),
                                 html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
-                                                 "borderRadius": "50%", "background": "#e74c3c", "marginRight": "1px"}),
-                                html.Span("Mid", style={"fontSize": "0.55rem", "color": COLORS["text_dim"],
-                                                         "marginRight": "4px"}),
-                                html.Span(style={"display": "inline-block", "width": "8px", "height": "8px",
-                                                 "borderRadius": "50%", "background": "#c0392b", "marginRight": "1px"}),
-                                html.Span("Strong", style={"fontSize": "0.55rem", "color": COLORS["text_dim"]}),
+                                                 "borderRadius": "50%", "background": "#f39c12", "marginRight": "1px"}),
+                                html.Span("Neutral", style={"fontSize": "0.55rem", "color": COLORS["text_dim"]}),
                             ]),
                         ]),
                     ]),
