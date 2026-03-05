@@ -505,9 +505,9 @@ def update_signals_for_all_pairs(
 
                 # ── RSI ───────────────────────────────────────────────
                 import math as _m
-                _ce_rsi = RSI.compute(ce_df, length=RSI_PERIOD).iloc[-1]
-                _pe_rsi = RSI.compute(pe_df, length=RSI_PERIOD).iloc[-1]
-                _idx_rsi = RSI.compute(idx_df, length=RSI_PERIOD).iloc[-1]
+                _ce_rsi = RSI.calculate(ce_df, length=RSI_PERIOD).iloc[-1]
+                _pe_rsi = RSI.calculate(pe_df, length=RSI_PERIOD).iloc[-1]
+                _idx_rsi = RSI.calculate(idx_df, length=RSI_PERIOD).iloc[-1]
                 ce_rsi_sig = None if _m.isnan(_ce_rsi) else float(_ce_rsi)
                 pe_rsi_sig = None if _m.isnan(_pe_rsi) else float(_pe_rsi)
                 idx_rsi_sig = None if _m.isnan(_idx_rsi) else float(_idx_rsi)
