@@ -963,35 +963,4 @@ class Fyers:
             columns=["Timestamp", "Open", "High", "Low", "Close", "Volume"],
         )
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit="s")
-
-        # ── Fill gaps for intraday data ────────────────────────────────
-        # TradingView shows a bar for every interval (even zero-volume),
-        # but the Fyers API only returns bars where trades occurred.
-        # Without filling, the "last 7 candles" on an illiquid option
-        # may span 30+ minutes instead of 7, misaligning SHA vs TV.
-        if resolution != "D":
-            freq_min = int(delta.total_seconds()) // 60
-            df = df.set_index("Timestamp").sort_index()
-            df = df.resample(f"{freq_min}min").agg({
-                "Open": "first", "High": "max", "Low": "min",
-                "Close": "last", "Volume": "sum",
-            })
-            # Forward-fill: zero-volume bars → O=H=L=C = prev Close
-            df["Close"] = df["Close"].ffill()
-            df["Open"] = df["Open"].fillna(df["Close"])
-            df["High"] = df["High"].fillna(df["Close"])
-            df["Low"] = df["Low"].fillna(df["Close"])
-            df["Volume"] = df["Volume"].fillna(0)
-
-            # Keep only market-hours bars on trading days
-            def _in_market(ts):
-                if not _is_trading_day(ts.date()):
-                    return False
-                o, c = _market_times(ts.date())
-                return o <= ts.time() <= c
-
-            df = df[df.index.map(_in_market)]
-            df = df.dropna(subset=["Close"])
-            df = df.reset_index()
-
         return df
