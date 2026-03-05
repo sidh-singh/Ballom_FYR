@@ -390,9 +390,9 @@ def process_symbol(
         idx_rel = compute_sha_relationship(idx_gap)
 
         # ── RSI ───────────────────────────────────────────────────────
-        ce_rsi_val = RSI.compute(ce_df, length=RSI_PERIOD).iloc[-1]
-        pe_rsi_val = RSI.compute(pe_df, length=RSI_PERIOD).iloc[-1]
-        idx_rsi_val = RSI.compute(idx_df, length=RSI_PERIOD).iloc[-1]
+        ce_rsi_val = RSI.calculate(ce_df, length=RSI_PERIOD).iloc[-1]
+        pe_rsi_val = RSI.calculate(pe_df, length=RSI_PERIOD).iloc[-1]
+        idx_rsi_val = RSI.calculate(idx_df, length=RSI_PERIOD).iloc[-1]
         ce_rsi = None if math.isnan(ce_rsi_val) else float(ce_rsi_val)
         pe_rsi = None if math.isnan(pe_rsi_val) else float(pe_rsi_val)
         idx_rsi = None if math.isnan(idx_rsi_val) else float(idx_rsi_val)
