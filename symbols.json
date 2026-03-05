@@ -7,23 +7,8 @@
             "hedge" : 500
         }
     ],
-    "commodities" : [
-        {
-            "symbol" : "SILVERM",
-            "commodity": "SILVER",
-            "qty_times" : 1,
-            "hedge" : 200,
-            "enabled": true
-        },
-        {
-            "symbol" : "GOLDM",
-            "commodity": "GOLD",
-            "qty_times" : 1,
-            "hedge" : 200,
-            "enabled": true
-        }
-    ],
-    "max_active_commodities": 1,
+    "commodities" : [],
+    "max_active_commodities": 0,
     "max_balance_usage": 100000,
     "brake" : 0
 }
