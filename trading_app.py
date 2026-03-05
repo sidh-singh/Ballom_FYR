@@ -112,9 +112,8 @@ def load_fyers_session(fyers_obj: Fyers) -> bool:
                 continue
 
             # Build FyersModel with the loaded token
-            fyers_obj._model = fyers_obj._build_model(token)
-            fyers_obj._access_token = token
-            fyers_obj._last_auth_date = date.today()
+            fyers_obj._api = fyers_obj._build_model(token)
+            fyers_obj._token_date = date.today()
 
             # Verify the token is valid
             if fyers_obj._verify_token(token):
@@ -576,6 +575,7 @@ def inner_loop(
                          message=f"No pairs in {pairs_json.name} — waiting for dev_scanner")
         log_strategy_event("SYSTEM", "INNER", "NO_PAIRS",
                            details=f"Empty file: {pairs_json.name} | market_type={market_type}")
+        sleep(30)  # backoff to avoid log spam while waiting for dev_scanner
         return inner_day_ref
 
     current_day = inner_day_ref
