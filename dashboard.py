@@ -1592,12 +1592,12 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             idx_t_cross = idx_t.get("crossover", [])
 
             # GAP% data
-            ce_gap_list = sig.get("ce_gap", [])
-            pe_gap_list = sig.get("pe_gap", [])
-            idx_gap_list = sig.get("idx_gap", [])
-            ce_gap_pct = ce_gap_list[0]["gap_pct"] if ce_gap_list else 0.0
-            pe_gap_pct = pe_gap_list[0]["gap_pct"] if pe_gap_list else 0.0
-            idx_gap_pct = idx_gap_list[0]["gap_pct"] if idx_gap_list else 0.0
+            ce_gap_data = sig.get("ce_gap", {})
+            pe_gap_data = sig.get("pe_gap", {})
+            idx_gap_data = sig.get("idx_gap", {})
+            ce_gap_pct = ce_gap_data.get("gap_pct", 0.0) if isinstance(ce_gap_data, dict) else 0.0
+            pe_gap_pct = pe_gap_data.get("gap_pct", 0.0) if isinstance(pe_gap_data, dict) else 0.0
+            idx_gap_pct = idx_gap_data.get("gap_pct", 0.0) if isinstance(idx_gap_data, dict) else 0.0
 
             # SHA Relationship data
             ce_rel = sig.get("ce_relationship", {})

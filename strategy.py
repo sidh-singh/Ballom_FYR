@@ -292,15 +292,15 @@ class HeikenAshiMartingale:
             ce_t_cross = pe_t_cross = idx_t_cross = []
 
         # ── GAP% data (optional — backwards compatible) ───────────────
-        # Latest gap %: gap_data["ce_gap"][0]["gap_pct"]
+        # gap_data["ce_gap"] is a dict with "gap_pct" (mean-based).
         # Use GAP_RANGE_LOW / GAP_RANGE_HIGH for range checks.
         _gap = gap_data or {}
-        ce_gap_list = _gap.get("ce_gap", [])
-        pe_gap_list = _gap.get("pe_gap", [])
-        idx_gap_list = _gap.get("idx_gap", [])
-        ce_gap_pct = ce_gap_list[0]["gap_pct"] if ce_gap_list else 0.0
-        pe_gap_pct = pe_gap_list[0]["gap_pct"] if pe_gap_list else 0.0
-        idx_gap_pct = idx_gap_list[0]["gap_pct"] if idx_gap_list else 0.0
+        ce_gap_info = _gap.get("ce_gap", {})
+        pe_gap_info = _gap.get("pe_gap", {})
+        idx_gap_info = _gap.get("idx_gap", {})
+        ce_gap_pct = ce_gap_info.get("gap_pct", 0.0) if isinstance(ce_gap_info, dict) else 0.0
+        pe_gap_pct = pe_gap_info.get("gap_pct", 0.0) if isinstance(pe_gap_info, dict) else 0.0
+        idx_gap_pct = idx_gap_info.get("gap_pct", 0.0) if isinstance(idx_gap_info, dict) else 0.0
 
         # GAP% range check (Alcadeias-style): only enter when gap between
         # Signal SHA and Trend SHA is within [LOW, HIGH] — confirms

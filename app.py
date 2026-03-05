@@ -515,43 +515,67 @@ def get_trend_details(
     return get_symbol_details(raw_df, sha_length=sha_length, sha_type=sha_type)
 
 
-def compute_sha_gap(signal_sha_debug: list, trend_sha_debug: list) -> list:
+def compute_sha_gap(signal_sha_debug: list, trend_sha_debug: list) -> dict:
     """
-    Compute GAP% between Signal SHA and Trend SHA for each candle.
+    Compute GAP% between Signal SHA and Trend SHA using means.
 
-    GAP% = ((signal_mid - trend_mid) / trend_mid) × 100
-    where mid = (High + Low) / 2
+    GAP% = ((mean_signal_mid - mean_trend_mid) / mean_trend_mid) × 100
 
-    Trend SHA is the base (denominator).
+    Uses the mean midpoint of each SHA across all candles, with Trend SHA
+    (second SHA) as the base. This gives a stable percentage that doesn't
+    fluctuate with individual candle ranges.
 
-    Returns a list of dicts: [{gap_pct, signal_mid, trend_mid}, ...] most-recent first.
-    Aligns by index (both lists are most-recent-first).
+    Returns dict:
+        gap_pct      — the mean-based gap percentage
+        signal_mean  — mean midpoint of Signal SHA candles
+        trend_mean   — mean midpoint of Trend SHA candles
+        per_candle   — per-candle gap data for relationship detection
     """
-    gap_list = []
-    for i in range(min(len(signal_sha_debug), len(trend_sha_debug))):
+    n = min(len(signal_sha_debug), len(trend_sha_debug))
+    if n == 0:
+        return {"gap_pct": 0.0, "signal_mean": 0.0, "trend_mean": 0.0, "per_candle": []}
+
+    sig_mids = []
+    trd_mids = []
+    per_candle = []
+
+    for i in range(n):
         sig = signal_sha_debug[i]
         trd = trend_sha_debug[i]
 
-        sig_h = sig.get("H", 0)
-        sig_l = sig.get("L", 0)
-        trd_h = trd.get("H", 0)
-        trd_l = trd.get("L", 0)
+        sig_mid = (sig.get("H", 0) + sig.get("L", 0)) / 2
+        trd_mid = (trd.get("H", 0) + trd.get("L", 0)) / 2
 
-        sig_mid = (sig_h + sig_l) / 2
-        trd_mid = (trd_h + trd_l) / 2
+        sig_mids.append(sig_mid)
+        trd_mids.append(trd_mid)
 
-        if trd_mid == 0:
-            gap_pct = 0.0
+        # Per-candle gap using trend mid as base
+        if abs(trd_mid) > 1e-9:
+            candle_gap = ((sig_mid - trd_mid) / abs(trd_mid)) * 100
         else:
-            gap_pct = ((sig_mid - trd_mid) / trd_mid) * 100
+            candle_gap = 0.0
 
-        gap_list.append({
-            "gap_pct": round(gap_pct, 4),
+        per_candle.append({
+            "gap_pct": round(candle_gap, 2),
             "signal_mid": round(sig_mid, 2),
             "trend_mid": round(trd_mid, 2),
         })
 
-    return gap_list
+    signal_mean = sum(sig_mids) / len(sig_mids)
+    trend_mean = sum(trd_mids) / len(trd_mids)
+
+    # Gap% using trend mean as base
+    if abs(trend_mean) > 1e-9:
+        gap_pct = ((signal_mean - trend_mean) / abs(trend_mean)) * 100
+    else:
+        gap_pct = 0.0
+
+    return {
+        "gap_pct": round(gap_pct, 2),
+        "signal_mean": round(signal_mean, 2),
+        "trend_mean": round(trend_mean, 2),
+        "per_candle": per_candle,
+    }
 
 
 def compute_sha_relationship(gap_list: list) -> dict:

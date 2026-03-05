@@ -168,9 +168,9 @@ def write_signal_state(
     pe_trend_sha_debug: list | None = None,
     idx_trend_sha_debug: list | None = None,
     # ── GAP% between Signal SHA and Trend SHA ─────────────────────────
-    ce_gap: list | None = None,
-    pe_gap: list | None = None,
-    idx_gap: list | None = None,
+    ce_gap: dict | None = None,
+    pe_gap: dict | None = None,
+    idx_gap: dict | None = None,
     # ── SHA Relationship (diverging / converging / parallel / close) ───
     ce_relationship: dict | None = None,
     pe_relationship: dict | None = None,
@@ -204,9 +204,9 @@ def write_signal_state(
                           "crossover": idx_trend_crossover or [],
                           "sha": idx_trend_sha_debug or []},
         # GAP% between Signal and Trend SHA
-        "ce_gap": ce_gap or [],
-        "pe_gap": pe_gap or [],
-        "idx_gap": idx_gap or [],
+        "ce_gap": ce_gap or {},
+        "pe_gap": pe_gap or {},
+        "idx_gap": idx_gap or {},
         # SHA Relationship
         "ce_relationship": ce_relationship or {},
         "pe_relationship": pe_relationship or {},
