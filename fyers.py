@@ -384,13 +384,19 @@ class Fyers:
             try:
                 # ─── 1. Get underlying price ──────────────────────────────
                 quote = self.api.quotes(data={"symbols": symbol})
+                if not isinstance(quote, dict) or quote.get("s") != "ok" or "d" not in quote:
+                    err_msg = quote.get("message", quote.get("s", "unknown")) if isinstance(quote, dict) else str(quote)[:100]
+                    raise ValueError(f"Quotes API error for {symbol}: {err_msg}")
                 current_price = quote["d"][0]["v"].get("lp")
                 if not current_price:
-                    raise ValueError("Underlying price unavailable")
+                    raise ValueError(f"Underlying price unavailable for {symbol}")
                 _log.append(f"price={current_price}")
 
                 # ─── 2. Base option chain (expiry list + VIX) ─────────────
                 base_chain = self.api.optionchain(data={"symbol": symbol, "strikecount": 20})
+                if not isinstance(base_chain, dict) or base_chain.get("s") != "ok":
+                    err_msg = base_chain.get("message", base_chain.get("s", "unknown")) if isinstance(base_chain, dict) else str(base_chain)[:100]
+                    raise ValueError(f"OptionChain API error for {symbol}: {err_msg}")
                 data = base_chain.get("data", {})
                 vix = data.get("indiavixData", {}).get("ltp", 20)
                 _log.append(f"VIX={vix}")
