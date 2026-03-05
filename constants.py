@@ -63,16 +63,19 @@ DEFAULT_CANDLES     = 500
 # ═══════════════════════════════════════════════════════════════════════════════
 #  GAP% PARAMETERS  (gap between Signal SHA and Trend SHA)
 # ═══════════════════════════════════════════════════════════════════════════════
-# GAP% = ((signal_sha_mid - trend_sha_mid) / trend_sha_mid) × 100
-# where mid = (High + Low) / 2  (mean of SHA candle)
+# GAP% = ((signal_sha_mid - trend_sha_mid) / avg_sha_range) × 100
+# where mid = (H + L) / 2, avg_sha_range = mean of both SHA candle ranges.
+#
+# Range-normalized: 50% means the gap equals half a SHA candle width.
+# This works across all price levels (options at 100, NIFTY at 25,000).
 #
 # GAP_RANGE_LOW / GAP_RANGE_HIGH define comfortable bounds for strategy use.
 # When |GAP%| is within [LOW, HIGH] range, trend and momentum agree.
 # When |GAP%| exceeds HIGH, signal is over-extended from trend.
 # When |GAP%| is below LOW, signal is converging with trend (range-bound).
 
-GAP_RANGE_LOW       = 0.8     # % — below this, signal is too close to trend
-GAP_RANGE_HIGH      = 16.0     # % — above this, signal is diverging from trend
+GAP_RANGE_LOW       = 25.0    # % of SHA range — below this, SHAs nearly overlapping
+GAP_RANGE_HIGH      = 150.0   # % of SHA range — above this, over-extended
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

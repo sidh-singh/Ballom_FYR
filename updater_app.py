@@ -236,8 +236,12 @@ def compute_sha_gap(signal_sha_debug: list, trend_sha_debug: list) -> list:
     """
     Compute GAP% between Signal SHA and Trend SHA for each candle.
 
-    GAP% = ((signal_mid - trend_mid) / trend_mid) × 100
-    where mid = (High + Low) / 2
+    GAP% = ((signal_mid - trend_mid) / avg_range) × 100
+    where mid = (High + Low) / 2, avg_range = mean of both SHA candle ranges.
+
+    Normalizing by SHA range (not absolute price) gives a metric that
+    reflects visual separation: 50% means the gap equals half a candle width,
+    regardless of whether the instrument trades at 100 or 25,000.
 
     Returns list of dicts: [{gap_pct, signal_mid, trend_mid}, ...] most-recent first.
     """
@@ -254,13 +258,17 @@ def compute_sha_gap(signal_sha_debug: list, trend_sha_debug: list) -> list:
         sig_mid = (sig_h + sig_l) / 2
         trd_mid = (trd_h + trd_l) / 2
 
-        if trd_mid == 0:
+        sig_range = abs(sig_h - sig_l)
+        trd_range = abs(trd_h - trd_l)
+        avg_range = (sig_range + trd_range) / 2
+
+        if avg_range == 0:
             gap_pct = 0.0
         else:
-            gap_pct = ((sig_mid - trd_mid) / trd_mid) * 100
+            gap_pct = ((sig_mid - trd_mid) / avg_range) * 100
 
         gap_list.append({
-            "gap_pct": round(gap_pct, 4),
+            "gap_pct": round(gap_pct, 2),
             "signal_mid": round(sig_mid, 2),
             "trend_mid": round(trd_mid, 2),
         })
@@ -285,12 +293,12 @@ def compute_sha_relationship(gap_list: list) -> dict:
     abs_gaps = [abs(g["gap_pct"]) for g in gap_list]
     avg_gap = sum(abs_gaps) / len(abs_gaps)
 
-    # CLOSE: SHAs nearly overlapping
-    CLOSE_THRESHOLD = 1.0
+    # CLOSE: SHAs nearly overlapping (gap < 30% of SHA candle width)
+    CLOSE_THRESHOLD = 30.0
     if avg_gap < CLOSE_THRESHOLD:
         strength = round(1.0 - avg_gap / CLOSE_THRESHOLD, 4)
         return {"status": "CLOSE", "strength": strength,
-                "avg_gap": round(avg_gap, 4), "delta": 0.0}
+                "avg_gap": round(avg_gap, 2), "delta": 0.0}
 
     # Trend analysis: compare recent half vs older half
     mid = len(abs_gaps) // 2
@@ -302,19 +310,19 @@ def compute_sha_relationship(gap_list: list) -> dict:
 
     delta = avg_recent - avg_older
 
-    PARALLEL_THRESHOLD = 0.5
+    PARALLEL_THRESHOLD = 15.0
     if abs(delta) < PARALLEL_THRESHOLD:
         strength = round(1.0 - abs(delta) / PARALLEL_THRESHOLD, 4)
         return {"status": "PARALLEL", "strength": strength,
-                "avg_gap": round(avg_gap, 4), "delta": round(delta, 4)}
+                "avg_gap": round(avg_gap, 2), "delta": round(delta, 2)}
     elif delta > 0:
-        strength = round(min(1.0, delta / 5.0), 4)
+        strength = round(min(1.0, delta / 100.0), 4)
         return {"status": "DIVERGING", "strength": strength,
-                "avg_gap": round(avg_gap, 4), "delta": round(delta, 4)}
+                "avg_gap": round(avg_gap, 2), "delta": round(delta, 2)}
     else:
-        strength = round(min(1.0, abs(delta) / 5.0), 4)
+        strength = round(min(1.0, abs(delta) / 100.0), 4)
         return {"status": "CONVERGING", "strength": strength,
-                "avg_gap": round(avg_gap, 4), "delta": round(delta, 4)}
+                "avg_gap": round(avg_gap, 2), "delta": round(delta, 2)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
