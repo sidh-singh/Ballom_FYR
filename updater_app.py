@@ -66,6 +66,8 @@ from constants import (
     DEFAULT_TIMEFRAME,
     DEFAULT_CANDLES,
     RSI_PERIOD,
+    RSI_5MIN_TIMEFRAME,
+    RSI_5MIN_CANDLES,
 )
 from state_writer import (
     configure as configure_state_writer,
@@ -408,13 +410,35 @@ def process_symbol(
         pe_rel = compute_sha_relationship(pe_gap)
         idx_rel = compute_sha_relationship(idx_gap)
 
-        # ── RSI ───────────────────────────────────────────────────────
+        # ── RSI (1min) ────────────────────────────────────────────────
         ce_rsi_val = RSI.calculate(ce_df, length=RSI_PERIOD).iloc[-1]
         pe_rsi_val = RSI.calculate(pe_df, length=RSI_PERIOD).iloc[-1]
         idx_rsi_val = RSI.calculate(idx_df, length=RSI_PERIOD).iloc[-1]
         ce_rsi = None if math.isnan(ce_rsi_val) else float(ce_rsi_val)
         pe_rsi = None if math.isnan(pe_rsi_val) else float(pe_rsi_val)
         idx_rsi = None if math.isnan(idx_rsi_val) else float(idx_rsi_val)
+
+        # ── RSI (5min) ────────────────────────────────────────────────
+        try:
+            def _fetch_5m(sym):
+                return fyers.fetch_historical_data(
+                    sym, RSI_5MIN_TIMEFRAME, RSI_5MIN_CANDLES,
+                    market_type=market_type,
+                    holidays=holidays,
+                    special_sessions=special_sessions,
+                )
+            with ThreadPoolExecutor(max_workers=2) as pool5:
+                f_ce5 = pool5.submit(_fetch_5m, ce_symbol)
+                f_pe5 = pool5.submit(_fetch_5m, pe_symbol)
+                ce_df_5m = f_ce5.result()
+                pe_df_5m = f_pe5.result()
+            ce_rsi_5m_val = RSI.calculate(ce_df_5m, length=RSI_PERIOD).iloc[-1]
+            pe_rsi_5m_val = RSI.calculate(pe_df_5m, length=RSI_PERIOD).iloc[-1]
+        except Exception:
+            ce_rsi_5m_val = float('nan')
+            pe_rsi_5m_val = float('nan')
+        ce_rsi_5m = None if math.isnan(ce_rsi_5m_val) else float(ce_rsi_5m_val)
+        pe_rsi_5m = None if math.isnan(pe_rsi_5m_val) else float(pe_rsi_5m_val)
 
         # ── Dump to signal_state.json (dashboard-compatible) ──────────
         write_signal_state(
@@ -453,6 +477,8 @@ def process_symbol(
             ce_rsi=ce_rsi,
             pe_rsi=pe_rsi,
             idx_rsi=idx_rsi,
+            ce_rsi_5m=ce_rsi_5m,
+            pe_rsi_5m=pe_rsi_5m,
             market_type=market_type,
         )
 
