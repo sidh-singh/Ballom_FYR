@@ -1818,6 +1818,11 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             "fontSize": "0.72rem", "fontWeight": "700",
                             "color": COLORS["text_dim"], "letterSpacing": "0.5px",
                             "display": "block", "marginBottom": "8px"}),
+                        # RSI 1min row
+                        html.Span("1 min", style={
+                            "fontSize": "0.62rem", "fontWeight": "600",
+                            "color": COLORS["text_muted"], "letterSpacing": "0.3px",
+                            "display": "block", "marginBottom": "4px"}),
                         html.Div(style={
                             "display": "grid", "gridTemplateColumns": "1fr 1fr 1fr",
                             "gap": "8px",
@@ -1825,6 +1830,18 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             _rsi_badge("CE", sig.get("ce_rsi", None), "#5dade2"),
                             _rsi_badge("PE", sig.get("pe_rsi", None), "#ff6b6b"),
                             _rsi_badge("IDX", sig.get("idx_rsi", None), "#ffd93d"),
+                        ]),
+                        # RSI 5min row
+                        html.Span("5 min", style={
+                            "fontSize": "0.62rem", "fontWeight": "600",
+                            "color": COLORS["text_muted"], "letterSpacing": "0.3px",
+                            "display": "block", "marginTop": "10px", "marginBottom": "4px"}),
+                        html.Div(style={
+                            "display": "grid", "gridTemplateColumns": "1fr 1fr",
+                            "gap": "8px",
+                        }, children=[
+                            _rsi_badge("CE", sig.get("ce_rsi_5m", None), "#5dade2"),
+                            _rsi_badge("PE", sig.get("pe_rsi_5m", None), "#ff6b6b"),
                         ]),
                     ]),
 
