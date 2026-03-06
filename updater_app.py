@@ -371,6 +371,9 @@ def process_symbol(
     Returns True on success, False on error.
     """
     try:
+        print(f"[DEBUG process_symbol] symbol_key={symbol_key!r}, "
+              f"CE={ce_symbol!r}, PE={pe_symbol!r}, underlying={underlying!r}")
+
         # ── Fetch historical OHLCV (CE, PE, IDX in parallel) ──────────
         def _fetch(sym):
             return fyers.fetch_historical_data(
@@ -590,14 +593,29 @@ def main():
         symbols_processed = 0
         symbols_failed = 0
 
+        # Resolve the correct underlying futures symbol from live MCX CSV
+        # instead of trusting commodity_pairs.json (scanner may have
+        # resolved GOLDM -> MCX:GOLD...FUT incorrectly).
+        mcx_df = Fyers.download_mcx_data()
+        print(f"[DEBUG updater] MCX CSV loaded: {len(mcx_df)} rows")
+
         com_pairs = _load_json(COMMODITY_PAIRS_JSON)
+        print(f"[DEBUG updater] commodity_pairs.json keys: {list(com_pairs.keys())}")
         for symbol_key, info in com_pairs.items():
             if symbol_key not in ACTIVE_SYMBOLS:
                 continue
             ce = info.get("CE", "")
             pe = info.get("PE", "")
-            underlying = info.get("commodity", "")
+            # Resolve underlying from MCX CSV using the exact symbol key
+            # (e.g. "GOLDM") so we get MCX:GOLDM26APRFUT, not GOLD.
+            underlying = Fyers.resolve_commodity_symbol(symbol_key, mcx_df)
+            print(f"[DEBUG updater] symbol_key={symbol_key!r}, CE={ce!r}, "
+                  f"PE={pe!r}, underlying={underlying!r}")
             if not ce or not pe or not underlying:
+                log_strategy_event(
+                    symbol_key, "UPDATER", "SKIP_SYMBOL",
+                    details=f"Missing data: CE={ce!r} PE={pe!r} underlying={underlying!r}",
+                )
                 continue
 
             ok = process_symbol(
