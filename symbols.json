@@ -2,8 +2,8 @@
     "indices" : [],
     "commodities" : [
         {
-            "symbol" : "GOLDM",
-            "commodity": "GOLD",
+            "symbol" : "SILVERM",
+            "commodity": "SILVER",
             "qty_times" : 1,
             "hedge" : 200,
             "enabled": true

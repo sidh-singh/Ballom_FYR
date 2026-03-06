@@ -573,11 +573,11 @@ class Fyers:
     @staticmethod
     def resolve_commodity_symbol(generic_name: str, mcx_df: pd.DataFrame) -> str | None:
         """
-        Resolve a generic commodity name (e.g. 'GOLDM') to the nearest
-        active (non-expired) MCX futures symbol (e.g. 'MCX:GOLDM26APRFUT').
+        Resolve a generic commodity name (e.g. 'SILVERM') to the nearest
+        active (non-expired) MCX futures symbol (e.g. 'MCX:SILVERM26APRFUT').
         """
-        # Use 'Underlying symbol' column for exact match to avoid GOLD
-        # matching GOLDM, GOLDMIC, etc.
+        # Use 'Underlying symbol' column for exact match to avoid SILVER
+        # matching SILVERM, SILVERMIC, etc.
         name_upper = generic_name.upper()
         futures = mcx_df[
             (mcx_df["Underlying symbol"].str.upper() == name_upper)
