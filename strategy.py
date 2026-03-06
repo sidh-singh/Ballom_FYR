@@ -244,6 +244,7 @@ class HeikenAshiMartingale:
         gap_data: dict | None = None,
         relationship_data: dict | None = None,
         rsi_data: dict | None = None,
+        rsi_5m_data: dict | None = None,
     ) -> tuple[OrderAction, OrderAction]:
         """
         Determine the trading action for CE and PE legs.
@@ -270,8 +271,11 @@ class HeikenAshiMartingale:
                       status: "DIVERGING" | "CONVERGING" | "PARALLEL" | "CLOSE"
                       Use relationship_data["ce_rel"]["status"] for CE relationship.
         rsi_data    : dict with keys ce_rsi, pe_rsi — latest RSI value (float)
-                      for the CE and PE option prices.  Used to trigger martingale
-                      when RSI is oversold (< RSI_OVERSOLD from constants.py).
+                      for the CE and PE option prices (1min timeframe).
+                      Used to trigger 1st martingale add when RSI is oversold.
+        rsi_5m_data : dict with keys ce_rsi_5m, pe_rsi_5m — latest RSI value
+                      (float) for the CE and PE option prices (5min timeframe).
+                      Used to trigger 2nd martingale add when RSI is oversold.
 
         Returns
         ───────
@@ -327,6 +331,11 @@ class HeikenAshiMartingale:
         _rsi = rsi_data or {}
         ce_rsi = _rsi.get("ce_rsi", float('nan'))
         pe_rsi = _rsi.get("pe_rsi", float('nan'))
+
+        # ── RSI 5min data (optional — 2nd martingale trigger) ─────────
+        _rsi_5m = rsi_5m_data or {}
+        ce_rsi_5m = _rsi_5m.get("ce_rsi_5m", float('nan'))
+        pe_rsi_5m = _rsi_5m.get("pe_rsi_5m", float('nan'))
 
         ce_qty, ce_unrealized, ce_realized, ce_total_pl, ce_ltp, ce_avg = self._read_position(
             position_df, ce_symbol, self.PRODUCT_TYPE)
@@ -470,15 +479,25 @@ class HeikenAshiMartingale:
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={ce_charges:.2f})")
-            elif not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD and ce_mg_level < MAX_MARTINGALE_LEVEL:
-                # RSI oversold → martingale add (average down)
+            elif not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD and ce_mg_level == 0:
+                # RSI 1min oversold → 1st martingale add (average down)
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
                 ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 ce_action.qty = ce_qty
                 ce_action.martingale_qty = mg_qty
-                log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY_RSI",
+                log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY_RSI_1M",
                                     qty=mg_qty, pl=ce_pl,
-                                    details=f"RSI={ce_rsi:.2f} < {RSI_OVERSOLD} oversold "
+                                    details=f"RSI_1m={ce_rsi:.2f} < {RSI_OVERSOLD} oversold "
+                                            f"(level={ce_mg_level}, fibo_qty={mg_qty})")
+            elif not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD and ce_mg_level == 1:
+                # RSI 5min oversold → 2nd martingale add (final add)
+                mg_qty = self._fibo_next_qty(ce_qty, base_qty)
+                ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
+                ce_action.qty = ce_qty
+                ce_action.martingale_qty = mg_qty
+                log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY_RSI_5M",
+                                    qty=mg_qty, pl=ce_pl,
+                                    details=f"RSI_5m={ce_rsi_5m:.2f} < {RSI_OVERSOLD} oversold "
                                             f"(level={ce_mg_level}, fibo_qty={mg_qty})")
 
         # ─────────────────────────────────────────────────────────────────────
@@ -494,15 +513,25 @@ class HeikenAshiMartingale:
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={pe_charges:.2f})")
-            elif not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD and pe_mg_level < MAX_MARTINGALE_LEVEL:
-                # RSI oversold → martingale add (average down)
+            elif not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD and pe_mg_level == 0:
+                # RSI 1min oversold → 1st martingale add (average down)
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)
                 pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 pe_action.qty = pe_qty
                 pe_action.martingale_qty = mg_qty
-                log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY_RSI",
+                log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY_RSI_1M",
                                     qty=mg_qty, pl=pe_pl,
-                                    details=f"RSI={pe_rsi:.2f} < {RSI_OVERSOLD} oversold "
+                                    details=f"RSI_1m={pe_rsi:.2f} < {RSI_OVERSOLD} oversold "
+                                            f"(level={pe_mg_level}, fibo_qty={mg_qty})")
+            elif not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD and pe_mg_level == 1:
+                # RSI 5min oversold → 2nd martingale add (final add)
+                mg_qty = self._fibo_next_qty(pe_qty, base_qty)
+                pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
+                pe_action.qty = pe_qty
+                pe_action.martingale_qty = mg_qty
+                log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY_RSI_5M",
+                                    qty=mg_qty, pl=pe_pl,
+                                    details=f"RSI_5m={pe_rsi_5m:.2f} < {RSI_OVERSOLD} oversold "
                                             f"(level={pe_mg_level}, fibo_qty={mg_qty})")
 
         return ce_action, pe_action
