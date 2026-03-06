@@ -1824,12 +1824,11 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                             "color": COLORS["text_muted"], "letterSpacing": "0.3px",
                             "display": "block", "marginBottom": "4px"}),
                         html.Div(style={
-                            "display": "grid", "gridTemplateColumns": "1fr 1fr 1fr",
+                            "display": "grid", "gridTemplateColumns": "1fr 1fr",
                             "gap": "8px",
                         }, children=[
                             _rsi_badge("CE", sig.get("ce_rsi", None), "#5dade2"),
                             _rsi_badge("PE", sig.get("pe_rsi", None), "#ff6b6b"),
-                            _rsi_badge("IDX", sig.get("idx_rsi", None), "#ffd93d"),
                         ]),
                         # RSI 5min row
                         html.Span("5 min", style={
