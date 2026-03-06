@@ -597,8 +597,10 @@ class Fyers:
             return None
 
         # Pick the nearest non-expired contract by expiry date
-        today_str = datetime.now().strftime("%Y-%m-%d")
-        futures = futures[futures["Expiry date"] >= today_str]
+        # Expiry date in the MCX CSV is an epoch timestamp (int), so
+        # compare with today's epoch — NOT a date string.
+        today_epoch = int(datetime.now().timestamp())
+        futures = futures[pd.to_numeric(futures["Expiry date"], errors="coerce") >= today_epoch]
         if futures.empty:
             print(f"[DEBUG resolve_commodity] All {name_upper} futures expired")
             return None
