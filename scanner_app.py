@@ -75,21 +75,36 @@ def _write_json_atomic(path: Path, data: dict) -> None:
         raise
 
 
-def has_open_positions() -> bool:
-    """Return True if dev_trading has any open positions.
+def get_symbols_with_open_positions() -> set[str]:
+    """Return the set of Fyers position symbols that have open positions.
 
-    Reads position_state.json (written by the trading bot) and checks
-    overall.count_open > 0.  Returns False on any read error so the
-    scanner defaults to scanning when the file is missing or corrupt.
+    Reads position_state.json (written by dev_trading) and collects the
+    'symbol' field from every position row whose netQty != 0.
+
+    Returns an empty set on any read error so the scanner defaults to
+    scanning when the file is missing or corrupt.
     """
     try:
         if not POSITION_STATE_FILE.exists():
-            return False
+            return set()
         with open(POSITION_STATE_FILE, "r") as f:
             data = json.load(f)
-        return data.get("overall", {}).get("count_open", 0) > 0
+        open_symbols: set[str] = set()
+        for pos in data.get("positions", []):
+            net_qty = pos.get("netQty", pos.get("qty", 0))
+            if int(net_qty) == 0:
+                continue
+            pos_symbol = pos.get("symbol", "").upper()
+            open_symbols.add(pos_symbol)
+        return open_symbols
     except Exception:
-        return False
+        return set()
+
+
+def _symbol_has_open_position(symbol_key: str, open_positions: set[str]) -> bool:
+    """Check if *symbol_key* matches any open position symbol."""
+    key_upper = symbol_key.upper()
+    return any(key_upper in pos_sym for pos_sym in open_positions)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -140,7 +155,7 @@ def is_trading_day(
 #  PAIR SCANNING
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def scan_index_pairs(fyers: Fyers, indices: list, option_df) -> dict:
+def scan_index_pairs(fyers: Fyers, indices: list, option_df, open_positions: set[str] | None = None) -> dict:
     """
     Scan all index symbols from symbols.json and return best CE/PE pairs.
 
@@ -150,10 +165,18 @@ def scan_index_pairs(fyers: Fyers, indices: list, option_df) -> dict:
           "indices": ..., "qty": ..., "hedge": ... }
     """
     result: dict = {}
+    open_positions = open_positions or set()
 
     for entry in indices:
         symbol_key = entry["symbol"]
         underlying = entry["indices"]
+
+        if _symbol_has_open_position(symbol_key, open_positions):
+            log_strategy_event(
+                symbol_key, "SCAN", "SKIP_OPEN_POSITION",
+                details=f"Position open for {symbol_key} — skipping scan",
+            )
+            continue
         qty_times  = entry.get("qty_times", 1)
         hedge      = entry.get("hedge", STRATEGY_HEDGE_INDEX)
 
@@ -214,7 +237,7 @@ def scan_index_pairs(fyers: Fyers, indices: list, option_df) -> dict:
     return result
 
 
-def scan_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> dict:
+def scan_commodity_pairs(fyers: Fyers, commodities: list, mcx_df, open_positions: set[str] | None = None) -> dict:
     """
     Scan all enabled commodity symbols from symbols.json and return best CE/PE pairs.
 
@@ -224,12 +247,20 @@ def scan_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> dict:
           "commodity": ..., "qty": ..., "hedge": ... }
     """
     result: dict = {}
+    open_positions = open_positions or set()
 
     for entry in commodities:
         if not entry.get("enabled", True):
             continue
 
         symbol_key = entry["symbol"]
+
+        if _symbol_has_open_position(symbol_key, open_positions):
+            log_strategy_event(
+                symbol_key, "SCAN", "SKIP_OPEN_POSITION",
+                details=f"Position open for {symbol_key} — skipping scan",
+            )
+            continue
         generic    = entry["symbol"]     # use symbol key (e.g. "SILVERM"), NOT
                                          # entry["commodity"] ("SILVER") which is
                                          # ambiguous and matches wrong contracts
@@ -433,19 +464,8 @@ def main():
         current_hour = now.hour
 
         if current_hour != last_scan_hour:
-            # ── Step 3a: Skip scan if trading bot has open positions ────────
-            if has_open_positions():
-                last_scan_hour = current_hour
-                write_app_status(
-                    mode, str(current_day), status="idle",
-                    message=f"Scan skipped — open position detected ({now.strftime('%H:%M')})",
-                )
-                log_strategy_event(
-                    "SYSTEM", "SCAN", "SKIP_OPEN_POSITION",
-                    details="Position open — deferring CE/PE scan until closed",
-                )
-                sleep(POLL_INTERVAL)
-                continue
+            # Fetch open positions once per scan cycle for per-symbol skip
+            open_positions = get_symbols_with_open_positions()
 
             in_idx_window = INDICES_START <= current_time <= INDICES_END
             in_com_window = COMMODITY_START <= current_time <= COMMODITY_END
@@ -464,7 +484,7 @@ def main():
                 # ── Scan indices (only during index window) ────────────────
                 if in_idx_window and option_df is not None:
                     try:
-                        idx_result = scan_index_pairs(fyers, indices, option_df)
+                        idx_result = scan_index_pairs(fyers, indices, option_df, open_positions)
                         _write_json_atomic(OPTION_PAIRS_JSON, idx_result)
                         idx_count = len(idx_result)
                         log_strategy_event(
@@ -480,7 +500,7 @@ def main():
                 if in_com_window and mcx_df is not None:
                     try:
                         com_result = scan_commodity_pairs(
-                            fyers, commodities, mcx_df,
+                            fyers, commodities, mcx_df, open_positions,
                         )
                         _write_json_atomic(COMMODITY_PAIRS_JSON, com_result)
                         com_count = len(com_result)
