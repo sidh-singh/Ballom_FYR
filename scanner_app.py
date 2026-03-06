@@ -224,12 +224,14 @@ def scan_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> dict:
             continue
 
         symbol_key = entry["symbol"]
-        generic    = entry["commodity"]
+        generic    = entry["symbol"]     # use symbol key (e.g. "SILVERM"), NOT
+                                         # entry["commodity"] ("SILVER") which is
+                                         # ambiguous and matches wrong contracts
         qty_times  = entry.get("qty_times", 1)
         hedge      = entry.get("hedge", STRATEGY_HEDGE_COMMODITY)
 
-        # Resolve the generic commodity name (e.g. "SILVER") to the actual
-        # Fyers tradable symbol (e.g. "MCX:SILVERM25JUNFUT")
+        # Resolve the commodity name (e.g. "SILVERM") to the actual
+        # Fyers tradable symbol (e.g. "MCX:SILVERM26APRFUT")
         actual = Fyers.resolve_commodity_symbol(generic, mcx_df)
         if not actual:
             log_strategy_event(

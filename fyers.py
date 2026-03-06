@@ -573,16 +573,40 @@ class Fyers:
     @staticmethod
     def resolve_commodity_symbol(generic_name: str, mcx_df: pd.DataFrame) -> str | None:
         """
-        Resolve a generic commodity name (e.g. 'SILVER') to the nearest
-        active MCX futures symbol (e.g. 'MCX:SILVERM25FEBFUT').
+        Resolve a generic commodity name (e.g. 'SILVERM') to the nearest
+        active (non-expired) MCX futures symbol (e.g. 'MCX:SILVERM26APRFUT').
         """
-        matches = mcx_df[
-            mcx_df["Symbol ticker"].str.contains(generic_name.upper(), case=False, na=False)
-        ]
-        futures = matches[matches["Symbol ticker"].str.contains("FUT", case=False, na=False)]
+        # Use 'Underlying symbol' column for exact match to avoid SILVER
+        # matching SILVERM, SILVERMIC, etc.
+        name_upper = generic_name.upper()
+        futures = mcx_df[
+            (mcx_df["Underlying symbol"].str.upper() == name_upper)
+            & mcx_df["Symbol ticker"].str.contains("FUT", case=False, na=False)
+        ].copy()
+
+        print(f"[DEBUG resolve_commodity] generic_name={generic_name!r}, "
+              f"matched_futures={len(futures)} rows")
+        if not futures.empty:
+            print(f"[DEBUG resolve_commodity] tickers: "
+                  f"{futures['Symbol ticker'].tolist()}")
+
         if futures.empty:
+            print(f"[DEBUG resolve_commodity] No futures found for {name_upper}. "
+                  f"Available underlying symbols: "
+                  f"{mcx_df['Underlying symbol'].dropna().unique()[:20].tolist()}")
             return None
-        return futures.iloc[0]["Symbol ticker"]
+
+        # Pick the nearest non-expired contract by expiry date
+        today_str = datetime.now().strftime("%Y-%m-%d")
+        futures = futures[futures["Expiry date"] >= today_str]
+        if futures.empty:
+            print(f"[DEBUG resolve_commodity] All {name_upper} futures expired")
+            return None
+
+        futures = futures.sort_values("Expiry date")
+        chosen = futures.iloc[0]["Symbol ticker"]
+        print(f"[DEBUG resolve_commodity] Chosen: {chosen}")
+        return chosen
 
     @staticmethod
     def has_index_positions(position_df: pd.DataFrame) -> bool:
