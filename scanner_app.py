@@ -165,11 +165,17 @@ def scan_index_pairs(fyers: Fyers, indices: list, option_df) -> dict:
 
         debug_trail = pair.get("Debug", "")
         if not pair.get("Recommended"):
+            # Accept the pair if CE/PE symbols exist (fallback pair)
+            if not pair.get("CE_Symbol") or not pair.get("PE_Symbol"):
+                log_strategy_event(
+                    symbol_key, "SCAN", "SKIP_INDEX",
+                    details=f"{pair.get('Message', 'skipped')} || {debug_trail}",
+                )
+                continue
             log_strategy_event(
-                symbol_key, "SCAN", "SKIP_INDEX",
-                details=f"{pair.get('Message', 'skipped')} || {debug_trail}",
+                symbol_key, "SCAN", "FALLBACK_INDEX",
+                details=f"Using fallback pair || {debug_trail}",
             )
-            continue
 
         try:
             lot = Fyers.get_lot_size(pair["CE_Symbol"], option_df)
@@ -253,11 +259,17 @@ def scan_commodity_pairs(fyers: Fyers, commodities: list, mcx_df) -> dict:
 
         debug_trail = pair.get("Debug", "")
         if not pair.get("Recommended"):
+            # Accept the pair if CE/PE symbols exist (fallback pair)
+            if not pair.get("CE_Symbol") or not pair.get("PE_Symbol"):
+                log_strategy_event(
+                    symbol_key, "SCAN", "SKIP_COMMODITY",
+                    details=f"{pair.get('Message', 'skipped')} || {debug_trail}",
+                )
+                continue
             log_strategy_event(
-                symbol_key, "SCAN", "SKIP_COMMODITY",
-                details=f"{pair.get('Message', 'skipped')} || {debug_trail}",
+                symbol_key, "SCAN", "FALLBACK_COMMODITY",
+                details=f"Using fallback pair || {debug_trail}",
             )
-            continue
 
         try:
             lot = Fyers.get_lot_size(pair["CE_Symbol"], mcx_df)

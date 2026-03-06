@@ -454,13 +454,19 @@ class Fyers:
                     rows_before = len(df)
                     _ltp_floor = 1 if asset_type == "COMMODITY" else 5
                     _vol_floor = 10 if asset_type == "COMMODITY" else 100
-                    df = df[(df["ltp"] <= max_premium_per_lot) & (df["ltp"] > _ltp_floor)]
-                    df = df[(df["oi"] >= min_oi_threshold) | (df["volume"] > _vol_floor)]
-                    if df.empty:
-                        _log.append(f"exp={exp_date.strftime('%d%b')} rows={rows_before}->0(filtered)")
-                        continue
-
-                    _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}")
+                    df_strict = df[(df["ltp"] <= max_premium_per_lot) & (df["ltp"] > _ltp_floor)]
+                    df_strict = df_strict[(df_strict["oi"] >= min_oi_threshold) | (df_strict["volume"] > _vol_floor)]
+                    if not df_strict.empty:
+                        df = df_strict
+                        _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}")
+                    else:
+                        # Relaxed fallback: only require positive LTP so we
+                        # always have candidates for a CE/PE pair.
+                        df = df[df["ltp"] > 0]
+                        if df.empty:
+                            _log.append(f"exp={exp_date.strftime('%d%b')} rows={rows_before}->0(all_filtered)")
+                            continue
+                        _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}(relaxed)")
 
                     # ─── 4. Score CE and PE separately ────────────────────
                     # Scoring is optimised for a BUY-only strategy:
@@ -521,17 +527,17 @@ class Fyers:
                 )
                 _log.append(f"combined={combined:.3f} threshold={min_trend_score}")
 
-                if combined < min_trend_score or (best_ce is None and best_pe is None):
-                    msg = f"No suitable options (CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"
-                    return {"Recommended": False, "Symbol": symbol,
-                            "Message": msg, "Debug": " | ".join(_log)}
-
-                # BOTH CE and PE must be found for a valid pair
+                # Both CE and PE must be present for a valid pair
                 if best_ce is None or best_pe is None:
                     missing = "CE" if best_ce is None else "PE"
                     msg = f"Only one side found ({missing} missing, CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"
                     return {"Recommended": False, "Symbol": symbol,
                             "Message": msg, "Debug": " | ".join(_log)}
+
+                # Always return the pair when both sides are found,
+                # even if the combined score is below the trend threshold.
+                # The caller gets the best available pair — Trend_Score
+                # communicates quality.
 
                 exp_date, dte, vix = best_exp_info
                 _log.append(f"SELECTED CE={best_ce['symbol']} PE={best_pe['symbol']}")
