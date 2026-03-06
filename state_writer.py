@@ -173,6 +173,9 @@ def write_signal_state(
     ce_rsi: float | None = None,
     pe_rsi: float | None = None,
     idx_rsi: float | None = None,
+    # ── RSI 5min (second martingale trigger) ───────────────────────────
+    ce_rsi_5m: float | None = None,
+    pe_rsi_5m: float | None = None,
     market_type: str = "INDEX",
 ) -> None:
     """Upsert one symbol's signal data (signal SHA + trend SHA + GAP% + relationship + RSI)."""
@@ -206,10 +209,13 @@ def write_signal_state(
         "ce_relationship": ce_relationship or {},
         "pe_relationship": pe_relationship or {},
         "idx_relationship": idx_relationship or {},
-        # RSI
+        # RSI (1min)
         "ce_rsi": round(ce_rsi, 2) if ce_rsi is not None else None,
         "pe_rsi": round(pe_rsi, 2) if pe_rsi is not None else None,
         "idx_rsi": round(idx_rsi, 2) if idx_rsi is not None else None,
+        # RSI (5min)
+        "ce_rsi_5m": round(ce_rsi_5m, 2) if ce_rsi_5m is not None else None,
+        "pe_rsi_5m": round(pe_rsi_5m, 2) if pe_rsi_5m is not None else None,
     }
     _write_json_atomic(SIGNAL_STATE_FILE, data)
 
