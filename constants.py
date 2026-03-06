@@ -56,8 +56,10 @@ SHA_MA_TYPE         = "RMA"
 SHA_TREND_LENGTH    = 6
 SHA_TREND_MA_TYPE   = "RMA"
 
-DEFAULT_TIMEFRAME   = "1"
-DEFAULT_CANDLES     = 500
+DEFAULT_TIMEFRAME       = "1"
+DEFAULT_CANDLES         = 500
+RSI_5MIN_TIMEFRAME      = "5"      # 5-minute candles for RSI 5min martingale
+RSI_5MIN_CANDLES        = 200      # fewer candles needed for 5min RSI
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
