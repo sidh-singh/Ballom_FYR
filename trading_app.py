@@ -67,6 +67,8 @@ from constants import (
     DEFAULT_CANDLES,
     RSI_5MIN_TIMEFRAME,
     RSI_5MIN_CANDLES,
+    RSI_15MIN_TIMEFRAME,
+    RSI_15MIN_CANDLES,
     INNER_LOOP_INTERVAL,
     STRATEGY_HEDGE_INDEX,
     STRATEGY_HEDGE_COMMODITY,
@@ -763,6 +765,31 @@ def inner_loop(
                 ce_rsi_5m_out = None if _m.isnan(ce_rsi_5m_val) else ce_rsi_5m_val
                 pe_rsi_5m_out = None if _m.isnan(pe_rsi_5m_val) else pe_rsi_5m_val
 
+                # ── Step B7: RSI on 15min data (3rd martingale trigger) ────
+                try:
+                    ce_df_15m = fyers.fetch_historical_data(
+                        ce_symbol, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES,
+                        market_type=market_type,
+                        holidays=holidays,
+                        special_sessions=special_sessions,
+                    )
+                    pe_df_15m = fyers.fetch_historical_data(
+                        pe_symbol, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES,
+                        market_type=market_type,
+                        holidays=holidays,
+                        special_sessions=special_sessions,
+                    )
+                    ce_rsi_15m_series = RSI.calculate(ce_df_15m, length=RSI_PERIOD)
+                    pe_rsi_15m_series = RSI.calculate(pe_df_15m, length=RSI_PERIOD)
+                    ce_rsi_15m_val = float(ce_rsi_15m_series.iloc[-1]) if len(ce_rsi_15m_series) > 0 else float('nan')
+                    pe_rsi_15m_val = float(pe_rsi_15m_series.iloc[-1]) if len(pe_rsi_15m_series) > 0 else float('nan')
+                except Exception:
+                    ce_rsi_15m_val = float('nan')
+                    pe_rsi_15m_val = float('nan')
+
+                ce_rsi_15m_out = None if _m.isnan(ce_rsi_15m_val) else ce_rsi_15m_val
+                pe_rsi_15m_out = None if _m.isnan(pe_rsi_15m_val) else pe_rsi_15m_val
+
                 power_list = [
                     (ce_power, ce_list),
                     (pe_power, pe_list),
@@ -816,6 +843,8 @@ def inner_loop(
                     idx_rsi=idx_rsi_out,
                     ce_rsi_5m=ce_rsi_5m_out,
                     pe_rsi_5m=pe_rsi_5m_out,
+                    ce_rsi_15m=ce_rsi_15m_out,
+                    pe_rsi_15m=pe_rsi_15m_out,
                     market_type=market_type,
                 )
 
@@ -840,6 +869,7 @@ def inner_loop(
                     relationship_data=relationship_data,
                     rsi_data={"ce_rsi": ce_rsi_val, "pe_rsi": pe_rsi_val},
                     rsi_5m_data={"ce_rsi_5m": ce_rsi_5m_val, "pe_rsi_5m": pe_rsi_5m_val},
+                    rsi_15m_data={"ce_rsi_15m": ce_rsi_15m_val, "pe_rsi_15m": pe_rsi_15m_val},
                 )
 
                 # ── Step D: Execute orders ────────────────────────────────
