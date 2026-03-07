@@ -1622,6 +1622,9 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
     if not isinstance(sig_data, dict):
         sig_data = {}
 
+    # Build set of symbols with open positions for quick lookup
+    _open_syms = {p.get("symbol", "") for p in open_positions}
+
     # Filter out stale symbols not in symbols.json
     if _allowed_syms is not None:
         sig_data = {k: v for k, v in sig_data.items() if k in _allowed_syms}
@@ -1657,6 +1660,23 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
             _pe_sym_raw = sig.get("pe_symbol", "")
             _ce_short = _ce_sym_raw.split(":")[-1] if _ce_sym_raw else ""
             _pe_short = _pe_sym_raw.split(":")[-1] if _pe_sym_raw else ""
+
+            # Detect if this symbol has an open position
+            _has_open_pos = (_ce_sym_raw in _open_syms) or (_pe_sym_raw in _open_syms)
+
+            # Detect if any RSI timeframe is oversold (blocks new entries)
+            from constants import RSI_OVERSOLD as _RSI_OS
+            _ce_rsi_val = sig.get("ce_rsi", None)
+            _pe_rsi_val = sig.get("pe_rsi", None)
+            _ce_rsi_5m_val = sig.get("ce_rsi_5m", None)
+            _pe_rsi_5m_val = sig.get("pe_rsi_5m", None)
+            _ce_rsi_15m_val = sig.get("ce_rsi_15m", None)
+            _pe_rsi_15m_val = sig.get("pe_rsi_15m", None)
+            _any_rsi_oversold = any(
+                v is not None and float(v) < _RSI_OS
+                for v in [_ce_rsi_val, _pe_rsi_val, _ce_rsi_5m_val, _pe_rsi_5m_val,
+                          _ce_rsi_15m_val, _pe_rsi_15m_val]
+            )
 
             ce = sig.get("ce", {})
             pe = sig.get("pe", {})
@@ -1724,6 +1744,32 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                                     "letterSpacing": "0.3px", "marginTop": "2px",
                                     "fontFamily": "'JetBrains Mono', monospace",
                                 }),
+                            # Status badges row (position open + RSI oversold)
+                            html.Div(style={
+                                "display": "flex", "gap": "6px", "marginTop": "4px",
+                                "flexWrap": "wrap",
+                            }, children=[
+                                *([
+                                    html.Span("\U0001f4b0 POSITION OPEN", style={
+                                        "fontSize": "0.55rem", "fontWeight": "700",
+                                        "color": "#00e5ff",
+                                        "background": "rgba(0,229,255,0.12)",
+                                        "padding": "1px 8px", "borderRadius": "10px",
+                                        "border": "1px solid rgba(0,229,255,0.3)",
+                                        "letterSpacing": "0.5px",
+                                    }),
+                                ] if _has_open_pos else []),
+                                *([
+                                    html.Span("\u26a0 RSI OVERSOLD — NO NEW ENTRY", style={
+                                        "fontSize": "0.55rem", "fontWeight": "700",
+                                        "color": "#ff8c42",
+                                        "background": "rgba(255,140,66,0.12)",
+                                        "padding": "1px 8px", "borderRadius": "10px",
+                                        "border": "1px solid rgba(255,140,66,0.3)",
+                                        "letterSpacing": "0.5px",
+                                    }),
+                                ] if _any_rsi_oversold and not _has_open_pos else []),
+                            ]),
                         ]),
                         html.Span(
                             ("📈 " if is_bull else "📉 ") + idx_trend,
@@ -1841,6 +1887,18 @@ def refresh_dashboard(_n, selected_mode, selected_chart_date):
                         }, children=[
                             _rsi_badge("CE", sig.get("ce_rsi_5m", None), "#5dade2"),
                             _rsi_badge("PE", sig.get("pe_rsi_5m", None), "#ff6b6b"),
+                        ]),
+                        # RSI 15min row
+                        html.Span("15 min", style={
+                            "fontSize": "0.62rem", "fontWeight": "600",
+                            "color": COLORS["text_muted"], "letterSpacing": "0.3px",
+                            "display": "block", "marginTop": "10px", "marginBottom": "4px"}),
+                        html.Div(style={
+                            "display": "grid", "gridTemplateColumns": "1fr 1fr",
+                            "gap": "8px",
+                        }, children=[
+                            _rsi_badge("CE", sig.get("ce_rsi_15m", None), "#5dade2"),
+                            _rsi_badge("PE", sig.get("pe_rsi_15m", None), "#ff6b6b"),
                         ]),
                     ]),
 
