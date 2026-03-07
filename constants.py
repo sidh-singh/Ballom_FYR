@@ -60,6 +60,8 @@ DEFAULT_TIMEFRAME       = "1"
 DEFAULT_CANDLES         = 500
 RSI_5MIN_TIMEFRAME      = "5"      # 5-minute candles for RSI 5min martingale
 RSI_5MIN_CANDLES        = 200      # fewer candles needed for 5min RSI
+RSI_15MIN_TIMEFRAME     = "15"     # 15-minute candles for RSI 15min martingale
+RSI_15MIN_CANDLES       = 100      # fewer candles needed for 15min RSI
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -160,7 +162,7 @@ STRATEGY_HEDGE_COMMODITY  = 200    # ₹ profit target for commodity option pair
 #                                     brokerage eats ~48% of a ₹100 target at qty=1)
 STRATEGY_PRODUCT_TYPE     = "MARGIN"
 FIBO_SEQUENCE_LENGTH      = 25     # Length of fibonacci sequence for martingale
-MAX_MARTINGALE_LEVEL      = 2      # Hard cap: max martingale adds (entry + 2 adds, close on 3rd trigger)
+MAX_MARTINGALE_LEVEL      = 3      # Hard cap: max martingale adds (entry + 3 adds, close on 4th trigger)
 
 # SHA Relationship filter for entry:
 # Only enter when the relationship between Signal SHA and Trend SHA
