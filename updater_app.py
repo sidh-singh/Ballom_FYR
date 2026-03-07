@@ -68,6 +68,8 @@ from constants import (
     RSI_PERIOD,
     RSI_5MIN_TIMEFRAME,
     RSI_5MIN_CANDLES,
+    RSI_15MIN_TIMEFRAME,
+    RSI_15MIN_CANDLES,
 )
 from state_writer import (
     configure as configure_state_writer,
@@ -443,6 +445,28 @@ def process_symbol(
         ce_rsi_5m = None if math.isnan(ce_rsi_5m_val) else float(ce_rsi_5m_val)
         pe_rsi_5m = None if math.isnan(pe_rsi_5m_val) else float(pe_rsi_5m_val)
 
+        # ── RSI (15min) ───────────────────────────────────────────────
+        try:
+            def _fetch_15m(sym):
+                return fyers.fetch_historical_data(
+                    sym, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES,
+                    market_type=market_type,
+                    holidays=holidays,
+                    special_sessions=special_sessions,
+                )
+            with ThreadPoolExecutor(max_workers=2) as pool15:
+                f_ce15 = pool15.submit(_fetch_15m, ce_symbol)
+                f_pe15 = pool15.submit(_fetch_15m, pe_symbol)
+                ce_df_15m = f_ce15.result()
+                pe_df_15m = f_pe15.result()
+            ce_rsi_15m_val = RSI.calculate(ce_df_15m, length=RSI_PERIOD).iloc[-1]
+            pe_rsi_15m_val = RSI.calculate(pe_df_15m, length=RSI_PERIOD).iloc[-1]
+        except Exception:
+            ce_rsi_15m_val = float('nan')
+            pe_rsi_15m_val = float('nan')
+        ce_rsi_15m = None if math.isnan(ce_rsi_15m_val) else float(ce_rsi_15m_val)
+        pe_rsi_15m = None if math.isnan(pe_rsi_15m_val) else float(pe_rsi_15m_val)
+
         # ── Dump to signal_state.json (dashboard-compatible) ──────────
         write_signal_state(
             symbol_key=symbol_key,
@@ -479,6 +503,8 @@ def process_symbol(
             # RSI
             ce_rsi=ce_rsi,
             pe_rsi=pe_rsi,
+            ce_rsi_15m=ce_rsi_15m,
+            pe_rsi_15m=pe_rsi_15m,
             idx_rsi=idx_rsi,
             ce_rsi_5m=ce_rsi_5m,
             pe_rsi_5m=pe_rsi_5m,
