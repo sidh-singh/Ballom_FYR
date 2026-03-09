@@ -88,18 +88,39 @@ class Fyers:
         if not force and self._api and self._token_date == today:
             return self._api
 
-        # Try loading token from file (first preference)
-        if not force:
-            token, token_dt = self._load_token()
-            if token and token_dt == today and self._verify_token(token):
-                self._api = self._build_model(token)
-                self._token_date = today
-                return self._api
+        # Always try loading token from file first — even when force=True.
+        # This prevents race conditions when multiple processes (scanner +
+        # updaters) detect a day-change simultaneously: only the first
+        # process to authenticate writes a fresh token; the rest pick it
+        # up from the shared file instead of each generating (and
+        # mutually invalidating) their own tokens via TOTP.
+        token, token_dt = self._load_token()
+        if token and token_dt == today and self._verify_token(token):
+            self._api = self._build_model(token)
+            self._token_date = today
+            return self._api
 
-        # Full login
+        # Full login (only when file has no valid token for today)
         self._api = self._authenticate()
         self._token_date = today
         return self._api
+
+    def invalidate_session(self) -> None:
+        """Clear cached session so the next ensure_session() re-loads from file."""
+        self._api = None
+        self._token_date = None
+
+    @staticmethod
+    def _is_auth_error(resp: dict | None) -> bool:
+        """True if a Fyers API response indicates an authentication failure."""
+        if not resp or not isinstance(resp, dict):
+            return False
+        msg = str(resp.get("message", "")).lower()
+        return (
+            "could not authenticate" in msg
+            or "invalid token" in msg
+            or "token is expired" in msg
+        )
 
     @property
     def api(self) -> fyersModel.FyersModel:
@@ -384,6 +405,11 @@ class Fyers:
             try:
                 # ─── 1. Get underlying price ──────────────────────────────
                 quote = self.api.quotes(data={"symbols": symbol})
+                # Auth failure → refresh token and retry this attempt
+                if self._is_auth_error(quote):
+                    self.invalidate_session()
+                    self.ensure_session(force=True)
+                    quote = self.api.quotes(data={"symbols": symbol})
                 if not isinstance(quote, dict) or quote.get("s") != "ok" or "d" not in quote:
                     err_msg = quote.get("message", quote.get("s", "unknown")) if isinstance(quote, dict) else str(quote)[:100]
                     raise ValueError(f"Quotes API error for {symbol}: {err_msg}")
@@ -977,6 +1003,15 @@ class Fyers:
         }
 
         resp = self.api.history(data=payload)
+
+        # On auth failure, refresh token from file and retry once.
+        # This handles the case where another process (e.g. scanner)
+        # re-authenticated and invalidated our cached token.
+        if self._is_auth_error(resp):
+            self.invalidate_session()
+            self.ensure_session(force=True)
+            resp = self.api.history(data=payload)
+
         response_status = resp.get("s") if resp else None
 
         if not resp or response_status not in ("ok", "no_data"):
