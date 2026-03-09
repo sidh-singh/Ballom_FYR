@@ -76,11 +76,14 @@ class Fyers:
     # ║  AUTH                                                                    ║
     # ╚══════════════════════════════════════════════════════════════════════════╝
 
-    def ensure_session(self, force: bool = False) -> fyersModel.FyersModel:
+    def ensure_session(self, force: bool = False, read_only: bool = False) -> fyersModel.FyersModel:
         """
         Return a ready-to-use FyersModel.
         - Reuses today's token from disk unless *force* is True.
         - On day-change the caller should pass force=True.
+        - If *read_only* is True, never attempt TOTP login — only load
+          from the shared token file.  Use this from updater branches
+          that rely on dev_scanner for authentication.
         """
         today = date.today()
 
@@ -99,6 +102,13 @@ class Fyers:
             self._api = self._build_model(token)
             self._token_date = today
             return self._api
+
+        # read_only mode: updaters must wait for scanner to write a fresh token
+        if read_only:
+            raise RuntimeError(
+                f"No valid token for {today} in {TOKEN_FILE} "
+                f"(file date: {token_dt}) — waiting for scanner to refresh"
+            )
 
         # Full login (only when file has no valid token for today)
         self._api = self._authenticate()
