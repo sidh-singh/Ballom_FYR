@@ -59,6 +59,11 @@ SHA_TREND_MA_TYPE   = "RMA"
 DEFAULT_TIMEFRAME   = "1"
 DEFAULT_CANDLES     = 500
 
+# Minimum 1min candles an option contract must have to be selected as a pair.
+# Ensures SHA + RSI processing works on 1min, 5min, and 15min timeframes.
+# 200 1min candles → 40 5min / 13 15min candles, sufficient for RSI-14.
+MIN_CANDLES_FOR_ANALYSIS = 200
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 #  GAP% PARAMETERS  (gap between Signal SHA and Trend SHA)

@@ -22,6 +22,7 @@ import pandas as pd
 from constants import (
     SYMBOLS_COLS, PlaceOrder, Transaction, CloseBySymbol, CloseBySection,
     POSITION_COL, TRADE_COLS, ORDER_COLS, OverallPosition,
+    MIN_CANDLES_FOR_ANALYSIS,
 )
 
 warnings.filterwarnings("ignore")
@@ -315,6 +316,21 @@ class Fyers:
     # ║  OPTION-PAIR SCANNER  (ported from app_fyers_strategy.fetch_option_data) ║
     # ╚══════════════════════════════════════════════════════════════════════════╝
 
+    def _count_available_candles(
+        self,
+        symbol: str,
+        market_type: str = "INDEX",
+    ) -> int:
+        """Return how many 1-minute candles Fyers has for *symbol* (0 on error)."""
+        try:
+            df = self.fetch_historical_data(
+                symbol, timeframe="1", candles=500,
+                market_type=market_type,
+            )
+            return len(df)
+        except Exception:
+            return 0
+
     def fetch_option_pair(
         self,
         symbol: str,
@@ -457,9 +473,8 @@ class Fyers:
                     ] or parsed
                 _log.append(f"expiries_filtered={len(expiry_list)}")
 
-                best_ce_score, best_pe_score = -1.0, -1.0
-                best_ce, best_pe = None, None
-                best_exp_info = None
+                ce_candidates = []  # [(score, row_dict, (exp_date, dte, vix))]
+                pe_candidates = []
 
                 # ─── 3. Loop through each expiry ─────────────────────────
                 for exp_date, exp_epoch in expiry_list:
@@ -542,49 +557,75 @@ class Fyers:
                             + price_momentum * 0.10
                             + _normalize(np.log1p(sub["volume"])) * 0.10
                         ).clip(0, 1)
-                        idx = sub["score"].idxmax()
-                        sc = sub.loc[idx, "score"]
-                        _log.append(f"  {otype}: best={sc:.3f} sym={sub.loc[idx, 'symbol']} strike={sub.loc[idx, 'strike_price']}")
-                        if otype == "CE" and sc > best_ce_score:
-                            best_ce_score = sc
-                            best_ce = sub.loc[idx]
-                            best_exp_info = (exp_date, dte, vix)
-                        elif otype == "PE" and sc > best_pe_score:
-                            best_pe_score = sc
-                            best_pe = sub.loc[idx]
-                            if best_exp_info is None:
-                                best_exp_info = (exp_date, dte, vix)
+                        # Collect top 3 candidates per expiry per side
+                        top_n = sub.nlargest(3, "score")
+                        best_idx = top_n.index[0]
+                        _log.append(f"  {otype}: best={sub.loc[best_idx, 'score']:.3f} sym={sub.loc[best_idx, 'symbol']} strike={sub.loc[best_idx, 'strike_price']}")
+                        for ri in top_n.index:
+                            cand = (
+                                float(sub.loc[ri, "score"]),
+                                sub.loc[ri].to_dict(),
+                                (exp_date, dte, vix),
+                            )
+                            if otype == "CE":
+                                ce_candidates.append(cand)
+                            else:
+                                pe_candidates.append(cand)
 
-                # ─── 5. Final decision ────────────────────────────────────
-                combined = (
-                    (best_ce_score + best_pe_score) / 2
-                    if best_ce is not None and best_pe is not None
-                    else max(best_ce_score, best_pe_score)
-                )
-                _log.append(f"combined={combined:.3f} threshold={min_trend_score}")
+                # ─── 5. Final decision — validate candle data ─────────────
+                ce_candidates.sort(key=lambda x: x[0], reverse=True)
+                pe_candidates.sort(key=lambda x: x[0], reverse=True)
 
-                # Both CE and PE must be present for a valid pair
-                if best_ce is None or best_pe is None:
-                    missing = "CE" if best_ce is None else "PE"
-                    msg = f"Only one side found ({missing} missing, CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"
+                if not ce_candidates or not pe_candidates:
+                    missing = "CE" if not ce_candidates else "PE"
+                    msg = f"No {missing} candidates found across all expiries"
                     return {"Recommended": False, "Symbol": symbol,
                             "Message": msg, "Debug": " | ".join(_log)}
 
-                # Always return the pair when both sides are found,
-                # even if the combined score is below the trend threshold.
-                # The caller gets the best available pair — Trend_Score
-                # communicates quality.
+                # Pick the first candidate per side that has enough
+                # 1-minute candle history for SHA + RSI to process.
+                # Fall back to the best-scored candidate if none pass.
+                selected_ce = None
+                for sc, row, exp in ce_candidates[:5]:
+                    count = self._count_available_candles(
+                        row["symbol"], market_type=asset_type,
+                    )
+                    _log.append(f"CE_candle_check: {row['symbol']} candles={count}")
+                    if count >= MIN_CANDLES_FOR_ANALYSIS:
+                        selected_ce = (sc, row, exp)
+                        break
+                if selected_ce is None:
+                    selected_ce = ce_candidates[0]
+                    _log.append("CE_fallback: using best-scored (low candle data)")
 
-                exp_date, dte, vix = best_exp_info
-                _log.append(f"SELECTED CE={best_ce['symbol']} PE={best_pe['symbol']}")
+                selected_pe = None
+                for sc, row, exp in pe_candidates[:5]:
+                    count = self._count_available_candles(
+                        row["symbol"], market_type=asset_type,
+                    )
+                    _log.append(f"PE_candle_check: {row['symbol']} candles={count}")
+                    if count >= MIN_CANDLES_FOR_ANALYSIS:
+                        selected_pe = (sc, row, exp)
+                        break
+                if selected_pe is None:
+                    selected_pe = pe_candidates[0]
+                    _log.append("PE_fallback: using best-scored (low candle data)")
+
+                ce_sc, ce_row, ce_exp = selected_ce
+                pe_sc, pe_row, pe_exp = selected_pe
+                combined = (ce_sc + pe_sc) / 2
+                _log.append(f"combined={combined:.3f} threshold={min_trend_score}")
+
+                exp_date, dte, vix = ce_exp
+                _log.append(f"SELECTED CE={ce_row['symbol']} PE={pe_row['symbol']}")
                 return {
                     "Recommended": True,
-                    "CE_Symbol": best_ce["symbol"],
-                    "PE_Symbol": best_pe["symbol"],
-                    "CE_Strike": float(best_ce["strike_price"]),
-                    "PE_Strike": float(best_pe["strike_price"]),
-                    "CE_Premium": float(best_ce["ltp"]),
-                    "PE_Premium": float(best_pe["ltp"]),
+                    "CE_Symbol": ce_row["symbol"],
+                    "PE_Symbol": pe_row["symbol"],
+                    "CE_Strike": float(ce_row["strike_price"]),
+                    "PE_Strike": float(pe_row["strike_price"]),
+                    "CE_Premium": float(ce_row["ltp"]),
+                    "PE_Premium": float(pe_row["ltp"]),
                     "Expiry": exp_date.strftime("%Y-%m-%d"),
                     "Days_To_Expiry": dte,
                     "Trend_Score": float(combined),
