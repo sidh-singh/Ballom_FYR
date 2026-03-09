@@ -103,7 +103,7 @@ def load_fyers_session(fyers: Fyers, force: bool = False) -> bool:
     Returns True if session is ready, False otherwise.
     """
     try:
-        fyers.ensure_session(force=force)
+        fyers.ensure_session(force=force, read_only=True)
         return True
     except Exception as e:
         log_strategy_event(
