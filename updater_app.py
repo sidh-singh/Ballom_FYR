@@ -48,6 +48,8 @@ from datetime import date, datetime, time as dt_time
 from pathlib import Path
 from time import sleep
 
+import pandas as pd
+
 from fyers import Fyers
 from demo_fyers import DemoFyers
 from indicator import SmoothedHeikenAshi, RSI
@@ -353,6 +355,30 @@ def compute_sha_relationship(gap_data: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+#  RESAMPLE 1min OHLCV TO HIGHER TIMEFRAME
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _resample_ohlcv(df: pd.DataFrame, factor: int) -> pd.DataFrame:
+    """Resample 1-minute OHLCV by grouping every *factor* consecutive rows.
+
+    This avoids extra API calls and works reliably even when the Fyers API
+    does not return 5min/15min candles for certain option contracts.
+    """
+    n = len(df)
+    trim = n % factor
+    trimmed = df.iloc[trim:].copy() if trim else df.copy()
+    groups = pd.RangeIndex(len(trimmed)) // factor
+    return trimmed.groupby(groups).agg({
+        "Timestamp": "last",
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }).reset_index(drop=True)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 #  PROCESS ONE SYMBOL PAIR  (fetch history → SHA → dump to JSON)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -423,46 +449,30 @@ def process_symbol(
         pe_rsi = None if math.isnan(pe_rsi_val) else float(pe_rsi_val)
         idx_rsi = None if math.isnan(idx_rsi_val) else float(idx_rsi_val)
 
-        # ── RSI (5min) ────────────────────────────────────────────────
-        try:
-            def _fetch_5m(sym):
-                return fyers.fetch_historical_data(
-                    sym, RSI_5MIN_TIMEFRAME, RSI_5MIN_CANDLES,
-                    market_type=market_type,
-                    holidays=holidays,
-                    special_sessions=special_sessions,
-                )
-            with ThreadPoolExecutor(max_workers=2) as pool5:
-                f_ce5 = pool5.submit(_fetch_5m, ce_symbol)
-                f_pe5 = pool5.submit(_fetch_5m, pe_symbol)
-                ce_df_5m = f_ce5.result()
-                pe_df_5m = f_pe5.result()
+        # ── RSI (5min) — resample 1min data ─────────────────────────
+        ce_df_5m = _resample_ohlcv(ce_df, 5)
+        pe_df_5m = _resample_ohlcv(pe_df, 5)
+        if len(ce_df_5m) > RSI_PERIOD:
             ce_rsi_5m_val = RSI.calculate(ce_df_5m, length=RSI_PERIOD).iloc[-1]
-            pe_rsi_5m_val = RSI.calculate(pe_df_5m, length=RSI_PERIOD).iloc[-1]
-        except Exception:
+        else:
             ce_rsi_5m_val = float('nan')
+        if len(pe_df_5m) > RSI_PERIOD:
+            pe_rsi_5m_val = RSI.calculate(pe_df_5m, length=RSI_PERIOD).iloc[-1]
+        else:
             pe_rsi_5m_val = float('nan')
         ce_rsi_5m = None if math.isnan(ce_rsi_5m_val) else float(ce_rsi_5m_val)
         pe_rsi_5m = None if math.isnan(pe_rsi_5m_val) else float(pe_rsi_5m_val)
 
-        # ── RSI (15min) ───────────────────────────────────────────────
-        try:
-            def _fetch_15m(sym):
-                return fyers.fetch_historical_data(
-                    sym, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES,
-                    market_type=market_type,
-                    holidays=holidays,
-                    special_sessions=special_sessions,
-                )
-            with ThreadPoolExecutor(max_workers=2) as pool15:
-                f_ce15 = pool15.submit(_fetch_15m, ce_symbol)
-                f_pe15 = pool15.submit(_fetch_15m, pe_symbol)
-                ce_df_15m = f_ce15.result()
-                pe_df_15m = f_pe15.result()
+        # ── RSI (15min) — resample 1min data ────────────────────────
+        ce_df_15m = _resample_ohlcv(ce_df, 15)
+        pe_df_15m = _resample_ohlcv(pe_df, 15)
+        if len(ce_df_15m) > RSI_PERIOD:
             ce_rsi_15m_val = RSI.calculate(ce_df_15m, length=RSI_PERIOD).iloc[-1]
-            pe_rsi_15m_val = RSI.calculate(pe_df_15m, length=RSI_PERIOD).iloc[-1]
-        except Exception:
+        else:
             ce_rsi_15m_val = float('nan')
+        if len(pe_df_15m) > RSI_PERIOD:
+            pe_rsi_15m_val = RSI.calculate(pe_df_15m, length=RSI_PERIOD).iloc[-1]
+        else:
             pe_rsi_15m_val = float('nan')
         ce_rsi_15m = None if math.isnan(ce_rsi_15m_val) else float(ce_rsi_15m_val)
         pe_rsi_15m = None if math.isnan(pe_rsi_15m_val) else float(pe_rsi_15m_val)
