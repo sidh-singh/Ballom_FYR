@@ -42,6 +42,8 @@ from pathlib import Path
 from time import sleep
 from dataclasses import asdict
 
+import pandas as pd
+
 from fyers import Fyers
 from demo_fyers import DemoFyers
 from indicator import SmoothedHeikenAshi, RSI
@@ -428,6 +430,26 @@ def compute_sha_relationship(gap_data: dict) -> dict:
                 "avg_gap": round(avg_gap, 2), "delta": round(delta, 2)}
 
 
+def _resample_ohlcv(df: pd.DataFrame, factor: int) -> pd.DataFrame:
+    """Resample 1-minute OHLCV by grouping every *factor* consecutive rows.
+
+    This avoids extra API calls and works reliably even when the Fyers API
+    does not return 5min/15min candles for certain option contracts.
+    """
+    n = len(df)
+    trim = n % factor
+    trimmed = df.iloc[trim:].copy() if trim else df.copy()
+    groups = pd.RangeIndex(len(trimmed)) // factor
+    return trimmed.groupby(groups).agg({
+        "Timestamp": "last",
+        "Open": "first",
+        "High": "max",
+        "Low": "min",
+        "Close": "last",
+        "Volume": "sum",
+    }).reset_index(drop=True)
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  SIGNAL UPDATE  (runs every outer-loop cycle — keeps dashboard fresh)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -516,6 +538,22 @@ def update_signals_for_all_pairs(
                 pe_rsi_sig = None if _m.isnan(_pe_rsi) else float(_pe_rsi)
                 idx_rsi_sig = None if _m.isnan(_idx_rsi) else float(_idx_rsi)
 
+                # ── RSI 5min (resampled from 1min) ───────────────────
+                ce_df_5m = _resample_ohlcv(ce_df, 5)
+                pe_df_5m = _resample_ohlcv(pe_df, 5)
+                _ce_rsi_5m = RSI.calculate(ce_df_5m, length=RSI_PERIOD).iloc[-1] if len(ce_df_5m) > RSI_PERIOD else float('nan')
+                _pe_rsi_5m = RSI.calculate(pe_df_5m, length=RSI_PERIOD).iloc[-1] if len(pe_df_5m) > RSI_PERIOD else float('nan')
+                ce_rsi_5m_sig = None if _m.isnan(_ce_rsi_5m) else float(_ce_rsi_5m)
+                pe_rsi_5m_sig = None if _m.isnan(_pe_rsi_5m) else float(_pe_rsi_5m)
+
+                # ── RSI 15min (resampled from 1min) ──────────────────
+                ce_df_15m = _resample_ohlcv(ce_df, 15)
+                pe_df_15m = _resample_ohlcv(pe_df, 15)
+                _ce_rsi_15m = RSI.calculate(ce_df_15m, length=RSI_PERIOD).iloc[-1] if len(ce_df_15m) > RSI_PERIOD else float('nan')
+                _pe_rsi_15m = RSI.calculate(pe_df_15m, length=RSI_PERIOD).iloc[-1] if len(pe_df_15m) > RSI_PERIOD else float('nan')
+                ce_rsi_15m_sig = None if _m.isnan(_ce_rsi_15m) else float(_ce_rsi_15m)
+                pe_rsi_15m_sig = None if _m.isnan(_pe_rsi_15m) else float(_pe_rsi_15m)
+
                 # ── Write to signal_state.json ────────────────────────
                 write_signal_state(
                     symbol_key=symbol_key,
@@ -533,6 +571,8 @@ def update_signals_for_all_pairs(
                     ce_gap=ce_gap, pe_gap=pe_gap, idx_gap=idx_gap,
                     ce_relationship=ce_rel, pe_relationship=pe_rel, idx_relationship=idx_rel,
                     ce_rsi=ce_rsi_sig, pe_rsi=pe_rsi_sig, idx_rsi=idx_rsi_sig,
+                    ce_rsi_5m=ce_rsi_5m_sig, pe_rsi_5m=pe_rsi_5m_sig,
+                    ce_rsi_15m=ce_rsi_15m_sig, pe_rsi_15m=pe_rsi_15m_sig,
                     market_type=market_type,
                 )
 
@@ -741,50 +781,34 @@ def inner_loop(
                 idx_rsi_out = None if _m.isnan(idx_rsi_val) else idx_rsi_val
 
                 # ── Step B6: RSI on 5min data (2nd martingale trigger) ────
-                try:
-                    ce_df_5m = fyers.fetch_historical_data(
-                        ce_symbol, RSI_5MIN_TIMEFRAME, RSI_5MIN_CANDLES,
-                        market_type=market_type,
-                        holidays=holidays,
-                        special_sessions=special_sessions,
-                    )
-                    pe_df_5m = fyers.fetch_historical_data(
-                        pe_symbol, RSI_5MIN_TIMEFRAME, RSI_5MIN_CANDLES,
-                        market_type=market_type,
-                        holidays=holidays,
-                        special_sessions=special_sessions,
-                    )
+                ce_df_5m = _resample_ohlcv(ce_df, 5)
+                pe_df_5m = _resample_ohlcv(pe_df, 5)
+                if len(ce_df_5m) > RSI_PERIOD:
                     ce_rsi_5m_series = RSI.calculate(ce_df_5m, length=RSI_PERIOD)
-                    pe_rsi_5m_series = RSI.calculate(pe_df_5m, length=RSI_PERIOD)
                     ce_rsi_5m_val = float(ce_rsi_5m_series.iloc[-1]) if len(ce_rsi_5m_series) > 0 else float('nan')
-                    pe_rsi_5m_val = float(pe_rsi_5m_series.iloc[-1]) if len(pe_rsi_5m_series) > 0 else float('nan')
-                except Exception:
+                else:
                     ce_rsi_5m_val = float('nan')
+                if len(pe_df_5m) > RSI_PERIOD:
+                    pe_rsi_5m_series = RSI.calculate(pe_df_5m, length=RSI_PERIOD)
+                    pe_rsi_5m_val = float(pe_rsi_5m_series.iloc[-1]) if len(pe_rsi_5m_series) > 0 else float('nan')
+                else:
                     pe_rsi_5m_val = float('nan')
 
                 ce_rsi_5m_out = None if _m.isnan(ce_rsi_5m_val) else ce_rsi_5m_val
                 pe_rsi_5m_out = None if _m.isnan(pe_rsi_5m_val) else pe_rsi_5m_val
 
                 # ── Step B7: RSI on 15min data (3rd martingale trigger) ────
-                try:
-                    ce_df_15m = fyers.fetch_historical_data(
-                        ce_symbol, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES,
-                        market_type=market_type,
-                        holidays=holidays,
-                        special_sessions=special_sessions,
-                    )
-                    pe_df_15m = fyers.fetch_historical_data(
-                        pe_symbol, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES,
-                        market_type=market_type,
-                        holidays=holidays,
-                        special_sessions=special_sessions,
-                    )
+                ce_df_15m = _resample_ohlcv(ce_df, 15)
+                pe_df_15m = _resample_ohlcv(pe_df, 15)
+                if len(ce_df_15m) > RSI_PERIOD:
                     ce_rsi_15m_series = RSI.calculate(ce_df_15m, length=RSI_PERIOD)
-                    pe_rsi_15m_series = RSI.calculate(pe_df_15m, length=RSI_PERIOD)
                     ce_rsi_15m_val = float(ce_rsi_15m_series.iloc[-1]) if len(ce_rsi_15m_series) > 0 else float('nan')
-                    pe_rsi_15m_val = float(pe_rsi_15m_series.iloc[-1]) if len(pe_rsi_15m_series) > 0 else float('nan')
-                except Exception:
+                else:
                     ce_rsi_15m_val = float('nan')
+                if len(pe_df_15m) > RSI_PERIOD:
+                    pe_rsi_15m_series = RSI.calculate(pe_df_15m, length=RSI_PERIOD)
+                    pe_rsi_15m_val = float(pe_rsi_15m_series.iloc[-1]) if len(pe_rsi_15m_series) > 0 else float('nan')
+                else:
                     pe_rsi_15m_val = float('nan')
 
                 ce_rsi_15m_out = None if _m.isnan(ce_rsi_15m_val) else ce_rsi_15m_val
