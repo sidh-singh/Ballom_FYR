@@ -76,11 +76,14 @@ class Fyers:
     # ║  AUTH                                                                    ║
     # ╚══════════════════════════════════════════════════════════════════════════╝
 
-    def ensure_session(self, force: bool = False) -> fyersModel.FyersModel:
+    def ensure_session(self, force: bool = False, read_only: bool = False) -> fyersModel.FyersModel:
         """
         Return a ready-to-use FyersModel.
         - Reuses today's token from disk unless *force* is True.
         - On day-change the caller should pass force=True.
+        - If *read_only* is True, never attempt TOTP login — only load
+          from the shared token file.  Use this from updater branches
+          that rely on dev_scanner for authentication.
         """
         today = date.today()
 
@@ -88,15 +91,26 @@ class Fyers:
         if not force and self._api and self._token_date == today:
             return self._api
 
-        # Try loading token from file (first preference)
-        if not force:
-            token, token_dt = self._load_token()
-            if token and token_dt == today and self._verify_token(token):
-                self._api = self._build_model(token)
-                self._token_date = today
-                return self._api
+        # Always try loading token from file first — even when force=True.
+        # This prevents race conditions when multiple processes (scanner +
+        # updaters) detect a day-change simultaneously: only the first
+        # process to authenticate writes a fresh token; the rest pick it
+        # up from the shared file instead of each generating (and
+        # mutually invalidating) their own tokens via TOTP.
+        token, token_dt = self._load_token()
+        if token and token_dt == today and self._verify_token(token):
+            self._api = self._build_model(token)
+            self._token_date = today
+            return self._api
 
-        # Full login
+        # read_only mode: updaters must wait for scanner to write a fresh token
+        if read_only:
+            raise RuntimeError(
+                f"No valid token for {today} in {TOKEN_FILE} "
+                f"(file date: {token_dt}) — waiting for scanner to refresh"
+            )
+
+        # Full login (only when file has no valid token for today)
         self._api = self._authenticate()
         self._token_date = today
         return self._api
