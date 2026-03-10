@@ -409,6 +409,23 @@ def process_symbol(
             ce_df_15m = fut_ce_15m.result()
             pe_df_15m = fut_pe_15m.result()
 
+        # ── Data quality check — log if API returned out-of-order data ─
+        for label, df_check in [("CE", ce_df), ("PE", pe_df), ("IDX", idx_df),
+                                ("CE_5m", ce_df_5m), ("PE_5m", pe_df_5m),
+                                ("CE_15m", ce_df_15m), ("PE_15m", pe_df_15m)]:
+            dq = df_check.attrs.get("_data_quality", {})
+            if dq.get("was_unsorted") or dq.get("duplicates_removed", 0) > 0:
+                unsorted_str = "UNSORTED→sorted" if dq.get("was_unsorted") else "ok"
+                dupes = dq.get("duplicates_removed", 0)
+                dupes_str = f", {dupes} dupes removed" if dupes else ""
+                cnt = dq.get("candles_returned", "?")
+                req = dq.get("candles_requested", "?")
+                sym = dq.get("symbol", "?")
+                log_strategy_event(
+                    symbol_key, "UPDATER", "DATA_QUALITY_FIX",
+                    details=f"{label}: {unsorted_str}{dupes_str} | candles={cnt}/{req} | sym={sym}",
+                )
+
         # ── Signal SHA (length=3) ─────────────────────────────────────
         ce_power, ce_list, ce_sha_dbg = get_symbol_details(ce_df)
         pe_power, pe_list, pe_sha_dbg = get_symbol_details(pe_df)
