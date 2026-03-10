@@ -355,30 +355,6 @@ def compute_sha_relationship(gap_data: dict) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-#  RESAMPLE 1min OHLCV TO HIGHER TIMEFRAME
-# ═══════════════════════════════════════════════════════════════════════════════
-
-def _resample_ohlcv(df: pd.DataFrame, factor: int) -> pd.DataFrame:
-    """Resample 1-minute OHLCV by grouping every *factor* consecutive rows.
-
-    This avoids extra API calls and works reliably even when the Fyers API
-    does not return 5min/15min candles for certain option contracts.
-    """
-    n = len(df)
-    trim = n % factor
-    trimmed = df.iloc[trim:].copy() if trim else df.copy()
-    groups = pd.RangeIndex(len(trimmed)) // factor
-    return trimmed.groupby(groups).agg({
-        "Timestamp": "last",
-        "Open": "first",
-        "High": "max",
-        "Low": "min",
-        "Close": "last",
-        "Volume": "sum",
-    }).reset_index(drop=True)
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
 #  PROCESS ONE SYMBOL PAIR  (fetch history → SHA → dump to JSON)
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -402,21 +378,33 @@ def process_symbol(
     """
     try:
         # ── Fetch historical OHLCV (CE, PE, IDX in parallel) ──────────
-        def _fetch(sym):
+        def _fetch(sym, tf=timeframe, cnt=candles):
             return fyers.fetch_historical_data(
-                sym, timeframe, candles,
+                sym, tf, cnt,
                 market_type=market_type,
                 holidays=holidays,
                 special_sessions=special_sessions,
             )
 
-        with ThreadPoolExecutor(max_workers=3) as pool:
+        with ThreadPoolExecutor(max_workers=7) as pool:
+            # 1-minute data (for SHA + 1min RSI)
             fut_ce = pool.submit(_fetch, ce_symbol)
             fut_pe = pool.submit(_fetch, pe_symbol)
             fut_idx = pool.submit(_fetch, underlying)
+            # 5-minute data (for 5min RSI)
+            fut_ce_5m = pool.submit(_fetch, ce_symbol, RSI_5MIN_TIMEFRAME, RSI_5MIN_CANDLES)
+            fut_pe_5m = pool.submit(_fetch, pe_symbol, RSI_5MIN_TIMEFRAME, RSI_5MIN_CANDLES)
+            # 15-minute data (for 15min RSI)
+            fut_ce_15m = pool.submit(_fetch, ce_symbol, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES)
+            fut_pe_15m = pool.submit(_fetch, pe_symbol, RSI_15MIN_TIMEFRAME, RSI_15MIN_CANDLES)
+
             ce_df = fut_ce.result()
             pe_df = fut_pe.result()
             idx_df = fut_idx.result()
+            ce_df_5m = fut_ce_5m.result()
+            pe_df_5m = fut_pe_5m.result()
+            ce_df_15m = fut_ce_15m.result()
+            pe_df_15m = fut_pe_15m.result()
 
         # ── Signal SHA (length=3) ─────────────────────────────────────
         ce_power, ce_list, ce_sha_dbg = get_symbol_details(ce_df)
@@ -446,9 +434,7 @@ def process_symbol(
         pe_rsi = None if math.isnan(pe_rsi_val) else float(pe_rsi_val)
         idx_rsi = None if math.isnan(idx_rsi_val) else float(idx_rsi_val)
 
-        # ── RSI (5min) — resample 1min data ─────────────────────────
-        ce_df_5m = _resample_ohlcv(ce_df, 5)
-        pe_df_5m = _resample_ohlcv(pe_df, 5)
+        # ── RSI (5min) — native 5-minute candles from API ──────────
         if len(ce_df_5m) > RSI_PERIOD:
             ce_rsi_5m_val = RSI.calculate(ce_df_5m, length=RSI_PERIOD).iloc[-1]
         else:
@@ -460,9 +446,7 @@ def process_symbol(
         ce_rsi_5m = None if math.isnan(ce_rsi_5m_val) else float(ce_rsi_5m_val)
         pe_rsi_5m = None if math.isnan(pe_rsi_5m_val) else float(pe_rsi_5m_val)
 
-        # ── RSI (15min) — resample 1min data ────────────────────────
-        ce_df_15m = _resample_ohlcv(ce_df, 15)
-        pe_df_15m = _resample_ohlcv(pe_df, 15)
+        # ── RSI (15min) — native 15-minute candles from API ──────────
         if len(ce_df_15m) > RSI_PERIOD:
             ce_rsi_15m_val = RSI.calculate(ce_df_15m, length=RSI_PERIOD).iloc[-1]
         else:
