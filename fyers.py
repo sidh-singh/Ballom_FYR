@@ -77,6 +77,11 @@ class Fyers:
     # ║  AUTH                                                                    ║
     # ╚══════════════════════════════════════════════════════════════════════════╝
 
+    # ── auth retry config ───────────────────────────────────────────────────
+    AUTH_MAX_RETRIES     = 5     # max TOTP login attempts before giving up
+    AUTH_RETRY_BASE_WAIT = 10    # seconds — base wait between retries (doubles)
+    AUTH_VERIFY_RETRIES  = 3     # token verification attempts (network flakes)
+
     def ensure_session(self, force: bool = False, read_only: bool = False) -> fyersModel.FyersModel:
         """
         Return a ready-to-use FyersModel.
@@ -99,7 +104,7 @@ class Fyers:
         # up from the shared file instead of each generating (and
         # mutually invalidating) their own tokens via TOTP.
         token, token_dt = self._load_token()
-        if token and token_dt == today and self._verify_token(token):
+        if token and token_dt == today and self._verify_token_safe(token):
             self._api = self._build_model(token)
             self._token_date = today
             return self._api
@@ -111,9 +116,22 @@ class Fyers:
                 f"(file date: {token_dt}) — waiting for scanner to refresh"
             )
 
-        # Full login (only when file has no valid token for today)
-        self._api = self._authenticate()
+        # Full login with retries (only when file has no valid token for today)
+        self._api = self._authenticate_with_retry()
         self._token_date = today
+        return self._api
+
+    def re_authenticate(self) -> fyersModel.FyersModel:
+        """
+        Force a full re-authentication cycle.
+
+        Use this when API calls fail mid-day with auth errors — the
+        existing token may have been invalidated server-side (Fyers
+        single-session policy, daily token rotation, etc.).
+        """
+        self.invalidate_session()
+        self._api = self._authenticate_with_retry()
+        self._token_date = date.today()
         return self._api
 
     def invalidate_session(self) -> None:
@@ -167,6 +185,23 @@ class Fyers:
         except Exception:
             return False
 
+    def _verify_token_safe(self, token: str) -> bool:
+        """Verify token with retries to handle transient network errors."""
+        for attempt in range(1, self.AUTH_VERIFY_RETRIES + 1):
+            try:
+                m = self._build_model(token)
+                resp = m.get_profile()
+                if resp.get("s") == "ok":
+                    return True
+                # Definitive rejection — no point retrying
+                if self._is_auth_error(resp):
+                    return False
+            except Exception:
+                pass
+            if attempt < self.AUTH_VERIFY_RETRIES:
+                sleep(2 * attempt)
+        return False
+
     def _build_model(self, token: str) -> fyersModel.FyersModel:
         return fyersModel.FyersModel(
             client_id=self.CLIENT_ID,
@@ -177,6 +212,24 @@ class Fyers:
 
     # ── full TOTP login ────────────────────────────────────────────────────────
 
+    def _authenticate_with_retry(self) -> fyersModel.FyersModel:
+        """Run TOTP-based login with retries and exponential backoff."""
+        last_err: Exception | None = None
+        for attempt in range(1, self.AUTH_MAX_RETRIES + 1):
+            try:
+                model = self._authenticate()
+                return model
+            except Exception as e:
+                last_err = e
+                if attempt < self.AUTH_MAX_RETRIES:
+                    wait = self.AUTH_RETRY_BASE_WAIT * (2 ** (attempt - 1))
+                    # Cap backoff at 120 seconds
+                    wait = min(wait, 120)
+                    sleep(wait)
+        raise RuntimeError(
+            f"Authentication failed after {self.AUTH_MAX_RETRIES} attempts: {last_err}"
+        )
+
     def _authenticate(self) -> fyersModel.FyersModel:
         url_otp    = f"{self.BASE_URL}/send_login_otp"
         url_verify = f"{self.BASE_URL}/verify_otp"
@@ -184,23 +237,30 @@ class Fyers:
         url_token  = f"{self.BASE_URL_2}/token"
 
         # 1. send OTP
-        r1 = requests.post(url_otp, json={"fy_id": self.FY_ID, "app_id": self.APP_ID}).json()
+        r1 = requests.post(url_otp, json={"fy_id": self.FY_ID, "app_id": self.APP_ID}, timeout=30).json()
+        if "request_key" not in r1:
+            raise RuntimeError(f"send_login_otp failed: {r1}")
         rk = r1["request_key"]
 
-        # 2. TOTP
-        if datetime.now().second % 30 > 27:
-            sleep(5)
+        # 2. TOTP — wait out the TOTP window edge to prevent stale codes
+        sec = datetime.now().second % 30
+        if sec > 25 or sec < 2:
+            sleep(max(30 - sec, 3))
         totp = pyotp.TOTP(self.TOTP_KEY).now()
 
         # 3. verify OTP
-        r2 = requests.post(url_verify, json={"request_key": rk, "otp": totp}).json()
+        r2 = requests.post(url_verify, json={"request_key": rk, "otp": totp}, timeout=30).json()
+        if "request_key" not in r2:
+            raise RuntimeError(f"verify_otp failed: {r2}")
         rk = r2["request_key"]
 
         # 4. verify PIN
         ses = requests.Session()
         r3 = ses.post(url_pin, json={
             "request_key": rk, "identity_type": "pin", "identifier": self.PIN
-        }).json()
+        }, timeout=30).json()
+        if not r3.get("data", {}).get("access_token"):
+            raise RuntimeError(f"verify_pin failed: {r3}")
         ses.headers.update({"authorization": f"Bearer {r3['data']['access_token']}"})
 
         # 5. authorization code
@@ -210,11 +270,17 @@ class Fyers:
             "code_challenge": "", "state": self.STATE, "scope": "",
             "nonce": "", "response_type": self.RESPONSE_TYPE, "create_cookie": True,
         }
-        r4 = ses.post(url_token, json=payload).json()
+        r4 = ses.post(url_token, json=payload, timeout=30).json()
         if "Url" in r4:
-            auth_code = parse_qs(urlparse(r4["Url"]).query)["auth_code"][0]
-        else:
+            parsed_url = urlparse(r4["Url"])
+            qs = parse_qs(parsed_url.query)
+            if "auth_code" not in qs:
+                raise RuntimeError(f"No auth_code in redirect URL: {r4['Url']}")
+            auth_code = qs["auth_code"][0]
+        elif r4.get("data", {}).get("auth"):
             auth_code = r4["data"]["auth"]
+        else:
+            raise RuntimeError(f"Token exchange failed — no auth_code: {r4}")
 
         # 6. final token
         session = fyersModel.SessionModel(
@@ -230,6 +296,23 @@ class Fyers:
         token = resp["access_token"]
         self._save_token(token)
         return self._build_model(token)
+
+    def safe_api_call(self, api_method, *args, **kwargs):
+        """
+        Call a Fyers API method, automatically re-authenticating on auth errors.
+
+        Usage:  resp = fyers_obj.safe_api_call(fyers_obj.api.quotes, data={...})
+
+        If the response indicates an authentication failure, does a full
+        re-auth cycle and retries the call once.  This handles mid-day
+        token invalidation (Fyers single-session policy, server-side
+        expiry, etc.) without the caller needing to know about auth.
+        """
+        resp = api_method(*args, **kwargs)
+        if self._is_auth_error(resp):
+            self.re_authenticate()
+            resp = api_method(*args, **kwargs)
+        return resp
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  TRADING                                                                 ║
@@ -430,12 +513,7 @@ class Fyers:
         for attempt in range(1, max_retries + 1):
             try:
                 # ─── 1. Get underlying price ──────────────────────────────
-                quote = self.api.quotes(data={"symbols": symbol})
-                # Auth failure → refresh token and retry this attempt
-                if self._is_auth_error(quote):
-                    self.invalidate_session()
-                    self.ensure_session(force=True)
-                    quote = self.api.quotes(data={"symbols": symbol})
+                quote = self.safe_api_call(self.api.quotes, data={"symbols": symbol})
                 if not isinstance(quote, dict) or quote.get("s") != "ok" or "d" not in quote:
                     err_msg = quote.get("message", quote.get("s", "unknown")) if isinstance(quote, dict) else str(quote)[:100]
                     raise ValueError(f"Quotes API error for {symbol}: {err_msg}")
@@ -445,7 +523,7 @@ class Fyers:
                 _log.append(f"price={current_price}")
 
                 # ─── 2. Base option chain (expiry list + VIX) ─────────────
-                base_chain = self.api.optionchain(data={"symbol": symbol, "strikecount": 20})
+                base_chain = self.safe_api_call(self.api.optionchain, data={"symbol": symbol, "strikecount": 20})
                 if not isinstance(base_chain, dict) or base_chain.get("s") != "ok":
                     err_msg = base_chain.get("message", base_chain.get("s", "unknown")) if isinstance(base_chain, dict) else str(base_chain)[:100]
                     raise ValueError(f"OptionChain API error for {symbol}: {err_msg}")
@@ -483,7 +561,7 @@ class Fyers:
                         _log.append(f"skip_exp={exp_date.strftime('%d%b')} dte={dte}<{min_days_to_expiry}")
                         continue
 
-                    oc = self.api.optionchain(data={
+                    oc = self.safe_api_call(self.api.optionchain, data={
                         "symbol": symbol, "strikecount": 20,
                         "timestamp": str(exp_epoch),
                     })
@@ -1053,15 +1131,7 @@ class Fyers:
             "cont_flag": "0" if is_option else "1",
         }
 
-        resp = self.api.history(data=payload)
-
-        # On auth failure, refresh token from file and retry once.
-        # This handles the case where another process (e.g. scanner)
-        # re-authenticated and invalidated our cached token.
-        if self._is_auth_error(resp):
-            self.invalidate_session()
-            self.ensure_session(force=True)
-            resp = self.api.history(data=payload)
+        resp = self.safe_api_call(self.api.history, data=payload)
 
         response_status = resp.get("s") if resp else None
 

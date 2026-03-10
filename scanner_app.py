@@ -127,6 +127,17 @@ def daily_setup(fyers: Fyers, force_auth: bool = False):
     return option_df, mcx_df, holidays, special_sessions
 
 
+def _is_auth_failure(exc: Exception) -> bool:
+    """True if an exception message indicates a Fyers auth failure."""
+    msg = str(exc).lower()
+    return (
+        "could not authenticate" in msg
+        or "invalid token" in msg
+        or "token is expired" in msg
+        or "authentication failed" in msg
+    )
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 #  TRADING-DAY AWARENESS
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -492,9 +503,29 @@ def main():
                             details=f"{idx_count} valid index pair(s) written",
                         )
                     except Exception as e:
-                        log_strategy_event(
-                            "SYSTEM", "SCAN", "INDEX_SCAN_FAIL", details=str(e),
-                        )
+                        if _is_auth_failure(e):
+                            log_strategy_event(
+                                "SYSTEM", "AUTH", "REAUTH_INDEX_SCAN",
+                                details=f"Auth failure during index scan — re-authenticating: {e}",
+                            )
+                            try:
+                                fyers.re_authenticate()
+                                idx_result = scan_index_pairs(fyers, indices, option_df, open_positions)
+                                _write_json_atomic(OPTION_PAIRS_JSON, idx_result)
+                                idx_count = len(idx_result)
+                                log_strategy_event(
+                                    "SYSTEM", "SCAN", "INDEX_SCAN_DONE",
+                                    details=f"{idx_count} valid index pair(s) written (after re-auth)",
+                                )
+                            except Exception as re_err:
+                                log_strategy_event(
+                                    "SYSTEM", "SCAN", "INDEX_SCAN_FAIL",
+                                    details=f"Re-auth retry also failed: {re_err}",
+                                )
+                        else:
+                            log_strategy_event(
+                                "SYSTEM", "SCAN", "INDEX_SCAN_FAIL", details=str(e),
+                            )
 
                 # ── Scan commodities (only during commodity window) ────────
                 if in_com_window and mcx_df is not None:
@@ -509,10 +540,32 @@ def main():
                             details=f"{com_count} valid commodity pair(s) written",
                         )
                     except Exception as e:
-                        log_strategy_event(
-                            "SYSTEM", "SCAN", "COMMODITY_SCAN_FAIL",
-                            details=str(e),
-                        )
+                        if _is_auth_failure(e):
+                            log_strategy_event(
+                                "SYSTEM", "AUTH", "REAUTH_COM_SCAN",
+                                details=f"Auth failure during commodity scan — re-authenticating: {e}",
+                            )
+                            try:
+                                fyers.re_authenticate()
+                                com_result = scan_commodity_pairs(
+                                    fyers, commodities, mcx_df, open_positions,
+                                )
+                                _write_json_atomic(COMMODITY_PAIRS_JSON, com_result)
+                                com_count = len(com_result)
+                                log_strategy_event(
+                                    "SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
+                                    details=f"{com_count} valid commodity pair(s) written (after re-auth)",
+                                )
+                            except Exception as re_err:
+                                log_strategy_event(
+                                    "SYSTEM", "SCAN", "COMMODITY_SCAN_FAIL",
+                                    details=f"Re-auth retry also failed: {re_err}",
+                                )
+                        else:
+                            log_strategy_event(
+                                "SYSTEM", "SCAN", "COMMODITY_SCAN_FAIL",
+                                details=str(e),
+                            )
 
                 last_scan_hour = current_hour
                 next_hour = (current_hour + 1) % 24
