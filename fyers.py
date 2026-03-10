@@ -1151,4 +1151,13 @@ class Fyers:
             columns=["Timestamp", "Open", "High", "Low", "Close", "Volume"],
         )
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit="s")
+
+        # ── Data quality: sort ascending + deduplicate ────────────────
+        # The Fyers API normally returns candles in ascending order, but
+        # edge cases (rate limits, server glitches) can produce out-of-order
+        # or duplicate entries.  Indicators like RSI use diff() which is
+        # extremely sensitive to ordering — reversed data can cause 60+
+        # point RSI errors.  Defensive sort + dedup prevents this.
+        df = df.sort_values("Timestamp").drop_duplicates(subset="Timestamp", keep="last").reset_index(drop=True)
+
         return df
