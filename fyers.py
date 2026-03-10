@@ -981,9 +981,25 @@ class Fyers:
         # ── Data quality: sort ascending + deduplicate ────────────────
         # The Fyers API normally returns candles in ascending order, but
         # edge cases (rate limits, server glitches) can produce out-of-order
-        # or duplicate entries.  Indicators like RSI use diff() which is
-        # extremely sensitive to ordering — reversed data can cause 60+
-        # point RSI errors.  Defensive sort + dedup prevents this.
-        df = df.sort_values("Timestamp").drop_duplicates(subset="Timestamp", keep="last").reset_index(drop=True)
+        # or duplicate entries.  Both SHA (Heiken-Ashi recursive) and RSI
+        # (diff-based) are extremely sensitive to ordering — reversed data
+        # causes SHA candle directions to invert and RSI to be off by 60+
+        # points.  Defensive sort + dedup prevents this.
+        was_unsorted = not df["Timestamp"].is_monotonic_increasing
+        n_before = len(df)
+        df = df.sort_values("Timestamp").drop_duplicates(
+            subset="Timestamp", keep="last"
+        ).reset_index(drop=True)
+        n_dupes = n_before - len(df)
+
+        # Attach diagnostics so callers can log data quality issues
+        df.attrs["_data_quality"] = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "was_unsorted": was_unsorted,
+            "duplicates_removed": n_dupes,
+            "candles_returned": len(df),
+            "candles_requested": candles,
+        }
 
         return df
