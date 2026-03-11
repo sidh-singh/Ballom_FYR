@@ -496,12 +496,19 @@ def main():
                 if in_idx_window and option_df is not None:
                     try:
                         idx_result = scan_index_pairs(fyers, indices, option_df, open_positions)
-                        _write_json_atomic(OPTION_PAIRS_JSON, idx_result)
-                        idx_count = len(idx_result)
-                        log_strategy_event(
-                            "SYSTEM", "SCAN", "INDEX_SCAN_DONE",
-                            details=f"{idx_count} valid index pair(s) written",
-                        )
+                        if idx_result:
+                            _write_json_atomic(OPTION_PAIRS_JSON, idx_result)
+                            idx_count = len(idx_result)
+                            log_strategy_event(
+                                "SYSTEM", "SCAN", "INDEX_SCAN_DONE",
+                                details=f"{idx_count} valid index pair(s) written",
+                            )
+                        else:
+                            # Preserve existing pairs — don't overwrite with empty
+                            log_strategy_event(
+                                "SYSTEM", "SCAN", "INDEX_SCAN_EMPTY",
+                                details="Scan returned 0 index pairs — keeping existing option_pairs.json",
+                            )
                     except Exception as e:
                         if _is_auth_failure(e):
                             log_strategy_event(
@@ -511,12 +518,18 @@ def main():
                             try:
                                 fyers.re_authenticate()
                                 idx_result = scan_index_pairs(fyers, indices, option_df, open_positions)
-                                _write_json_atomic(OPTION_PAIRS_JSON, idx_result)
-                                idx_count = len(idx_result)
-                                log_strategy_event(
-                                    "SYSTEM", "SCAN", "INDEX_SCAN_DONE",
-                                    details=f"{idx_count} valid index pair(s) written (after re-auth)",
-                                )
+                                if idx_result:
+                                    _write_json_atomic(OPTION_PAIRS_JSON, idx_result)
+                                    idx_count = len(idx_result)
+                                    log_strategy_event(
+                                        "SYSTEM", "SCAN", "INDEX_SCAN_DONE",
+                                        details=f"{idx_count} valid index pair(s) written (after re-auth)",
+                                    )
+                                else:
+                                    log_strategy_event(
+                                        "SYSTEM", "SCAN", "INDEX_SCAN_EMPTY",
+                                        details="Re-auth scan returned 0 index pairs — keeping existing option_pairs.json",
+                                    )
                             except Exception as re_err:
                                 log_strategy_event(
                                     "SYSTEM", "SCAN", "INDEX_SCAN_FAIL",
@@ -533,12 +546,18 @@ def main():
                         com_result = scan_commodity_pairs(
                             fyers, commodities, mcx_df, open_positions,
                         )
-                        _write_json_atomic(COMMODITY_PAIRS_JSON, com_result)
-                        com_count = len(com_result)
-                        log_strategy_event(
-                            "SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
-                            details=f"{com_count} valid commodity pair(s) written",
-                        )
+                        if com_result:
+                            _write_json_atomic(COMMODITY_PAIRS_JSON, com_result)
+                            com_count = len(com_result)
+                            log_strategy_event(
+                                "SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
+                                details=f"{com_count} valid commodity pair(s) written",
+                            )
+                        else:
+                            log_strategy_event(
+                                "SYSTEM", "SCAN", "COMMODITY_SCAN_EMPTY",
+                                details="Scan returned 0 commodity pairs — keeping existing commodity_pairs.json",
+                            )
                     except Exception as e:
                         if _is_auth_failure(e):
                             log_strategy_event(
@@ -550,12 +569,18 @@ def main():
                                 com_result = scan_commodity_pairs(
                                     fyers, commodities, mcx_df, open_positions,
                                 )
-                                _write_json_atomic(COMMODITY_PAIRS_JSON, com_result)
-                                com_count = len(com_result)
-                                log_strategy_event(
-                                    "SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
-                                    details=f"{com_count} valid commodity pair(s) written (after re-auth)",
-                                )
+                                if com_result:
+                                    _write_json_atomic(COMMODITY_PAIRS_JSON, com_result)
+                                    com_count = len(com_result)
+                                    log_strategy_event(
+                                        "SYSTEM", "SCAN", "COMMODITY_SCAN_DONE",
+                                        details=f"{com_count} valid commodity pair(s) written (after re-auth)",
+                                    )
+                                else:
+                                    log_strategy_event(
+                                        "SYSTEM", "SCAN", "COMMODITY_SCAN_EMPTY",
+                                        details="Re-auth scan returned 0 commodity pairs — keeping existing commodity_pairs.json",
+                                    )
                             except Exception as re_err:
                                 log_strategy_event(
                                     "SYSTEM", "SCAN", "COMMODITY_SCAN_FAIL",
