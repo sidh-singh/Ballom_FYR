@@ -472,6 +472,23 @@ class HeikenAshiMartingale:
             or (not math.isnan(pe_rsi_15m) and pe_rsi_15m < RSI_OVERSOLD)
         )
 
+        # ── Cross-leg RSI flags for martingale triggers ──────────────
+        # Martingale should fire when EITHER leg's RSI is oversold —
+        # e.g. holding PE and CE RSI is oversold indicates market stress
+        # that affects the active position (IV crush, extreme moves).
+        _any_1m_oversold = (
+            (not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD)
+            or (not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD)
+        )
+        _any_5m_oversold = (
+            (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
+            or (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
+        )
+        _any_15m_oversold = (
+            (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
+            or (not math.isnan(pe_rsi_15m) and pe_rsi_15m < RSI_OVERSOLD)
+        )
+
         if ce_qty == 0 and pe_qty == 0:
             # ── entry (Alcadeias-style) ───────────────────────────────
             # Both Signal SHA and Trend SHA must agree on direction,
@@ -513,53 +530,57 @@ class HeikenAshiMartingale:
                                     qty=ce_qty, pl=ce_pl,
                                     details=f"P&L {ce_pl:.2f} > adj_target {ce_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={ce_charges:.2f})")
-            elif ce_mg_level == 0 and (
-                (not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD)
-                or (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
-                or (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
-            ):
-                # ANY RSI timeframe oversold → 1st martingale add (average down)
+            elif ce_mg_level == 0 and (_any_1m_oversold or _any_5m_oversold or _any_15m_oversold):
+                # ANY RSI timeframe (either leg) oversold → 1st martingale add
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
                 ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 ce_action.qty = ce_qty
                 ce_action.martingale_qty = mg_qty
                 _ce_trigger = (
-                    f"1m={ce_rsi:.2f}" if (not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD)
-                    else f"5m={ce_rsi_5m:.2f}" if (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
-                    else f"15m={ce_rsi_15m:.2f}"
+                    f"CE_1m={ce_rsi:.1f}" if (not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD)
+                    else f"PE_1m={pe_rsi:.1f}" if (not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD)
+                    else f"CE_5m={ce_rsi_5m:.1f}" if (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
+                    else f"PE_5m={pe_rsi_5m:.1f}" if (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
+                    else f"CE_15m={ce_rsi_15m:.1f}" if (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
+                    else f"PE_15m={pe_rsi_15m:.1f}"
                 )
                 log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY_RSI_L0",
                                     qty=mg_qty, pl=ce_pl,
                                     details=f"RSI {_ce_trigger} < {RSI_OVERSOLD} oversold "
                                             f"(level={ce_mg_level}, fibo_qty={mg_qty})"
-                                            f" | 1m={ce_rsi:.2f} 5m={ce_rsi_5m:.2f} 15m={ce_rsi_15m:.2f}")
-            elif ce_mg_level == 1 and (
-                (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
-                or (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
-            ):
-                # 5min OR 15min RSI oversold → 2nd martingale add
+                                            f" | CE: 1m={ce_rsi:.1f} 5m={ce_rsi_5m:.1f} 15m={ce_rsi_15m:.1f}"
+                                            f" | PE: 1m={pe_rsi:.1f} 5m={pe_rsi_5m:.1f} 15m={pe_rsi_15m:.1f}")
+            elif ce_mg_level == 1 and (_any_5m_oversold or _any_15m_oversold):
+                # 5min OR 15min RSI (either leg) oversold → 2nd martingale add
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
                 ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 ce_action.qty = ce_qty
                 ce_action.martingale_qty = mg_qty
                 _ce_trigger = (
-                    f"5m={ce_rsi_5m:.2f}" if (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
-                    else f"15m={ce_rsi_15m:.2f}"
+                    f"CE_5m={ce_rsi_5m:.1f}" if (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
+                    else f"PE_5m={pe_rsi_5m:.1f}" if (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
+                    else f"CE_15m={ce_rsi_15m:.1f}" if (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
+                    else f"PE_15m={pe_rsi_15m:.1f}"
                 )
                 log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY_RSI_L1",
                                     qty=mg_qty, pl=ce_pl,
                                     details=f"RSI {_ce_trigger} < {RSI_OVERSOLD} oversold "
                                             f"(level={ce_mg_level}, fibo_qty={mg_qty})"
-                                            f" | 5m={ce_rsi_5m:.2f} 15m={ce_rsi_15m:.2f}")
-            elif not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD and ce_mg_level == 2:
-                # RSI 15min oversold → 3rd martingale add
+                                            f" | CE: 5m={ce_rsi_5m:.1f} 15m={ce_rsi_15m:.1f}"
+                                            f" | PE: 5m={pe_rsi_5m:.1f} 15m={pe_rsi_15m:.1f}")
+            elif ce_mg_level == 2 and _any_15m_oversold:
+                # RSI 15min (either leg) oversold → 3rd martingale add
                 mg_qty = self._fibo_next_qty(ce_qty, base_qty)
                 ce_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 ce_action.qty = ce_qty
                 ce_action.martingale_qty = mg_qty
+                _ce_trigger = (
+                    f"CE_15m={ce_rsi_15m:.1f}" if (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
+                    else f"PE_15m={pe_rsi_15m:.1f}"
+                )
                 log_strategy_event(ce_symbol, "CE", "MARTINGALE_BUY_RSI_L2",
                                     qty=mg_qty, pl=ce_pl,
-                                    details=f"RSI_15m={ce_rsi_15m:.2f} < {RSI_OVERSOLD} oversold "
+                                    details=f"RSI {_ce_trigger} < {RSI_OVERSOLD} oversold "
                                             f"(level={ce_mg_level}, fibo_qty={mg_qty})")
 
         # ─────────────────────────────────────────────────────────────────────
@@ -575,53 +596,57 @@ class HeikenAshiMartingale:
                                     qty=pe_qty, pl=pe_pl,
                                     details=f"P&L {pe_pl:.2f} > adj_target {pe_adj_hedge:.2f}"
                                             f" (hedge={hedge} + charges={pe_charges:.2f})")
-            elif pe_mg_level == 0 and (
-                (not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD)
-                or (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
-                or (not math.isnan(pe_rsi_15m) and pe_rsi_15m < RSI_OVERSOLD)
-            ):
-                # ANY RSI timeframe oversold → 1st martingale add (average down)
+            elif pe_mg_level == 0 and (_any_1m_oversold or _any_5m_oversold or _any_15m_oversold):
+                # ANY RSI timeframe (either leg) oversold → 1st martingale add
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)
                 pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 pe_action.qty = pe_qty
                 pe_action.martingale_qty = mg_qty
                 _pe_trigger = (
-                    f"1m={pe_rsi:.2f}" if (not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD)
-                    else f"5m={pe_rsi_5m:.2f}" if (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
-                    else f"15m={pe_rsi_15m:.2f}"
+                    f"CE_1m={ce_rsi:.1f}" if (not math.isnan(ce_rsi) and ce_rsi < RSI_OVERSOLD)
+                    else f"PE_1m={pe_rsi:.1f}" if (not math.isnan(pe_rsi) and pe_rsi < RSI_OVERSOLD)
+                    else f"CE_5m={ce_rsi_5m:.1f}" if (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
+                    else f"PE_5m={pe_rsi_5m:.1f}" if (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
+                    else f"CE_15m={ce_rsi_15m:.1f}" if (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
+                    else f"PE_15m={pe_rsi_15m:.1f}"
                 )
                 log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY_RSI_L0",
                                     qty=mg_qty, pl=pe_pl,
                                     details=f"RSI {_pe_trigger} < {RSI_OVERSOLD} oversold "
                                             f"(level={pe_mg_level}, fibo_qty={mg_qty})"
-                                            f" | 1m={pe_rsi:.2f} 5m={pe_rsi_5m:.2f} 15m={pe_rsi_15m:.2f}")
-            elif pe_mg_level == 1 and (
-                (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
-                or (not math.isnan(pe_rsi_15m) and pe_rsi_15m < RSI_OVERSOLD)
-            ):
-                # 5min OR 15min RSI oversold → 2nd martingale add
+                                            f" | CE: 1m={ce_rsi:.1f} 5m={ce_rsi_5m:.1f} 15m={ce_rsi_15m:.1f}"
+                                            f" | PE: 1m={pe_rsi:.1f} 5m={pe_rsi_5m:.1f} 15m={pe_rsi_15m:.1f}")
+            elif pe_mg_level == 1 and (_any_5m_oversold or _any_15m_oversold):
+                # 5min OR 15min RSI (either leg) oversold → 2nd martingale add
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)
                 pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 pe_action.qty = pe_qty
                 pe_action.martingale_qty = mg_qty
                 _pe_trigger = (
-                    f"5m={pe_rsi_5m:.2f}" if (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
-                    else f"15m={pe_rsi_15m:.2f}"
+                    f"CE_5m={ce_rsi_5m:.1f}" if (not math.isnan(ce_rsi_5m) and ce_rsi_5m < RSI_OVERSOLD)
+                    else f"PE_5m={pe_rsi_5m:.1f}" if (not math.isnan(pe_rsi_5m) and pe_rsi_5m < RSI_OVERSOLD)
+                    else f"CE_15m={ce_rsi_15m:.1f}" if (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
+                    else f"PE_15m={pe_rsi_15m:.1f}"
                 )
                 log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY_RSI_L1",
                                     qty=mg_qty, pl=pe_pl,
                                     details=f"RSI {_pe_trigger} < {RSI_OVERSOLD} oversold "
                                             f"(level={pe_mg_level}, fibo_qty={mg_qty})"
-                                            f" | 5m={pe_rsi_5m:.2f} 15m={pe_rsi_15m:.2f}")
-            elif not math.isnan(pe_rsi_15m) and pe_rsi_15m < RSI_OVERSOLD and pe_mg_level == 2:
-                # RSI 15min oversold → 3rd martingale add
+                                            f" | CE: 5m={ce_rsi_5m:.1f} 15m={ce_rsi_15m:.1f}"
+                                            f" | PE: 5m={pe_rsi_5m:.1f} 15m={pe_rsi_15m:.1f}")
+            elif pe_mg_level == 2 and _any_15m_oversold:
+                # RSI 15min (either leg) oversold → 3rd martingale add
                 mg_qty = self._fibo_next_qty(pe_qty, base_qty)
                 pe_action.status = Transaction.BUY_WITH_SPECIFIC_VOLUME
                 pe_action.qty = pe_qty
                 pe_action.martingale_qty = mg_qty
+                _pe_trigger = (
+                    f"CE_15m={ce_rsi_15m:.1f}" if (not math.isnan(ce_rsi_15m) and ce_rsi_15m < RSI_OVERSOLD)
+                    else f"PE_15m={pe_rsi_15m:.1f}"
+                )
                 log_strategy_event(pe_symbol, "PE", "MARTINGALE_BUY_RSI_L2",
                                     qty=mg_qty, pl=pe_pl,
-                                    details=f"RSI_15m={pe_rsi_15m:.2f} < {RSI_OVERSOLD} oversold "
+                                    details=f"RSI {_pe_trigger} < {RSI_OVERSOLD} oversold "
                                             f"(level={pe_mg_level}, fibo_qty={mg_qty})")
 
         return ce_action, pe_action
