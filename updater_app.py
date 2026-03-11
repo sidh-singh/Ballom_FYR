@@ -35,6 +35,7 @@ Token sharing:  reads token from C:/Ballom_FYR/fyers_token.json
 import sys
 import json
 import math
+import random
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import date, datetime, time as dt_time
 from pathlib import Path
@@ -100,6 +101,11 @@ def load_fyers_session(fyers: Fyers, force: bool = False) -> bool:
     but fall back to full TOTP re-auth if the token is missing,
     expired, or invalid.
 
+    Anti-collision: when multiple updater processes detect an expired
+    token simultaneously, a random jitter prevents them all from
+    racing to TOTP-auth at the same instant (Fyers single-session
+    policy would invalidate each other's tokens).
+
     Returns True if session is ready, False otherwise.
     """
     try:
@@ -109,11 +115,30 @@ def load_fyers_session(fyers: Fyers, force: bool = False) -> bool:
     except Exception:
         pass
 
-    # Scanner's token unavailable/expired — do full self-auth
+    # ── Anti-collision jitter ──────────────────────────────────────────────
+    jitter = random.uniform(2, 15)
+    log_strategy_event(
+        "SYSTEM", "AUTH", "SELF_AUTH_WAIT",
+        details=f"Token expired — waiting {jitter:.1f}s before self-auth (anti-collision)",
+    )
+    sleep(jitter)
+
+    # Re-read file — another updater (or scanner) may have refreshed it
+    try:
+        fyers.ensure_session(force=True, read_only=True)
+        log_strategy_event(
+            "SYSTEM", "AUTH", "TOKEN_REFRESHED_BY_PEER",
+            details="Another process refreshed the token — loaded from file",
+        )
+        return True
+    except Exception:
+        pass
+
+    # Still no valid token — do full self-auth
     try:
         log_strategy_event(
             "SYSTEM", "AUTH", "SELF_AUTH_START",
-            details="Scanner token unavailable — attempting self-auth",
+            details="No peer refreshed token — attempting self-auth",
         )
         fyers.ensure_session(force=True, read_only=False)
         log_strategy_event(
