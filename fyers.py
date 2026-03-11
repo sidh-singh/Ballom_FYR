@@ -109,8 +109,17 @@ class Fyers:
             self._token_date = today
             return self._api
 
-        # read_only mode: updaters must wait for scanner to write a fresh token
+        # read_only mode: updaters must wait for scanner to write a fresh token.
+        # Day-change grace: Fyers tokens remain valid past midnight until
+        # a new TOTP login is performed.  Before hard-failing, verify the
+        # previous day's token against the server.  This lets updaters
+        # keep running while the scanner performs a fresh login, instead
+        # of hard-failing at midnight due to a date mismatch in the file.
         if read_only:
+            if token and token_dt and token_dt != today and self._verify_token_safe(token):
+                self._api = self._build_model(token)
+                self._token_date = today
+                return self._api
             raise RuntimeError(
                 f"No valid token for {today} in {TOKEN_FILE} "
                 f"(file date: {token_dt}) — waiting for scanner to refresh"
