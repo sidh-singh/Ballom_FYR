@@ -111,16 +111,17 @@ def _load_json(path: Path) -> dict:
 
 def load_fyers_session(fyers: Fyers, force: bool = False) -> bool:
     """
-    Load the Fyers token from C:/Ballom_FYR/fyers_token.json.
+    Load the Fyers token from the shared file written by dev_scanner.
 
-    This token is written by the dev_scanner branch.  We only READ it
-    here — no TOTP login is performed.  If the token is missing or
-    expired, we wait for dev_scanner to refresh it.
+    Updaters are strictly read-only — they NEVER perform TOTP login.
+    Multiple processes doing TOTP simultaneously would invalidate each
+    other's tokens (Fyers single-session policy), causing a cascade
+    of auth failures across all branches.
 
     Returns True if session is ready, False otherwise.
     """
     try:
-        fyers.ensure_session(force=force)
+        fyers.ensure_session(force=force, read_only=True)
         return True
     except Exception as e:
         log_strategy_event(
@@ -491,6 +492,11 @@ def main():
 
     # ── Fyers client ───────────────────────────────────────────────────────
     fyers: Fyers = DemoFyers() if mode == "demo" else Fyers()
+    # Updaters must NEVER do TOTP login — only the scanner should.
+    # Multiple processes doing TOTP simultaneously invalidates each other's
+    # tokens (Fyers single-session policy).  read_only_auth ensures this
+    # instance only ever loads tokens from the shared file.
+    fyers._read_only_auth = True
 
     # ── Load token (written by dev_scanner) ────────────────────────────────
     current_day = date.today()

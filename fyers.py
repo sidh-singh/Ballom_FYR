@@ -22,6 +22,7 @@ import pandas as pd
 from constants import (
     SYMBOLS_COLS, PlaceOrder, Transaction, CloseBySymbol, CloseBySection,
     POSITION_COL, TRADE_COLS, ORDER_COLS, OverallPosition,
+    MIN_CANDLES_FOR_ANALYSIS,
 )
 
 warnings.filterwarnings("ignore")
@@ -58,6 +59,7 @@ class Fyers:
     def __init__(self) -> None:
         self._api: fyersModel.FyersModel | None = None
         self._token_date: date | None = None  # date the current token was issued
+        self._read_only_auth: bool = False  # when True, never do TOTP login
 
         self._buy_tpl = PlaceOrder(
             symbol="", qty=0, type=2, side=Transaction.BUY.value,
@@ -76,11 +78,19 @@ class Fyers:
     # ║  AUTH                                                                    ║
     # ╚══════════════════════════════════════════════════════════════════════════╝
 
-    def ensure_session(self, force: bool = False) -> fyersModel.FyersModel:
+    # ── auth retry config ───────────────────────────────────────────────────
+    AUTH_MAX_RETRIES     = 5     # max TOTP login attempts before giving up
+    AUTH_RETRY_BASE_WAIT = 10    # seconds — base wait between retries (doubles)
+    AUTH_VERIFY_RETRIES  = 3     # token verification attempts (network flakes)
+
+    def ensure_session(self, force: bool = False, read_only: bool = False) -> fyersModel.FyersModel:
         """
         Return a ready-to-use FyersModel.
         - Reuses today's token from disk unless *force* is True.
         - On day-change the caller should pass force=True.
+        - If *read_only* is True, never attempt TOTP login — only load
+          from the shared token file.  Use this from updater branches
+          that rely on dev_scanner for authentication.
         """
         today = date.today()
 
@@ -88,18 +98,74 @@ class Fyers:
         if not force and self._api and self._token_date == today:
             return self._api
 
-        # Try loading token from file (first preference)
-        if not force:
-            token, token_dt = self._load_token()
-            if token and token_dt == today and self._verify_token(token):
+        # Always try loading token from file first — even when force=True.
+        # This prevents race conditions when multiple processes (scanner +
+        # updaters) detect a day-change simultaneously: only the first
+        # process to authenticate writes a fresh token; the rest pick it
+        # up from the shared file instead of each generating (and
+        # mutually invalidating) their own tokens via TOTP.
+        token, token_dt = self._load_token()
+        if token and token_dt == today and self._verify_token_safe(token):
+            self._api = self._build_model(token)
+            self._token_date = today
+            return self._api
+
+        # read_only mode: updaters must wait for scanner to write a fresh token.
+        # Day-change grace: Fyers tokens remain valid past midnight until
+        # a new TOTP login is performed.  Before hard-failing, verify the
+        # previous day's token against the server.  This lets updaters
+        # keep running while the scanner performs a fresh login, instead
+        # of hard-failing at midnight due to a date mismatch in the file.
+        if read_only:
+            if token and token_dt and token_dt != today and self._verify_token_safe(token):
                 self._api = self._build_model(token)
                 self._token_date = today
                 return self._api
+            raise RuntimeError(
+                f"No valid token for {today} in {TOKEN_FILE} "
+                f"(file date: {token_dt}) — waiting for scanner to refresh"
+            )
 
-        # Full login
-        self._api = self._authenticate()
+        # Full login with retries (only when file has no valid token for today)
+        self._api = self._authenticate_with_retry()
         self._token_date = today
         return self._api
+
+    def re_authenticate(self) -> fyersModel.FyersModel:
+        """
+        Force a full re-authentication cycle.
+
+        Use this when API calls fail mid-day with auth errors — the
+        existing token may have been invalidated server-side (Fyers
+        single-session policy, daily token rotation, etc.).
+
+        In read-only auth mode (updaters), only reloads from the shared
+        token file instead of doing TOTP login — prevents multiple
+        processes from invalidating each other's tokens.
+        """
+        self.invalidate_session()
+        if self._read_only_auth:
+            return self.ensure_session(force=True, read_only=True)
+        self._api = self._authenticate_with_retry()
+        self._token_date = date.today()
+        return self._api
+
+    def invalidate_session(self) -> None:
+        """Clear cached session so the next ensure_session() re-loads from file."""
+        self._api = None
+        self._token_date = None
+
+    @staticmethod
+    def _is_auth_error(resp: dict | None) -> bool:
+        """True if a Fyers API response indicates an authentication failure."""
+        if not resp or not isinstance(resp, dict):
+            return False
+        msg = str(resp.get("message", "")).lower()
+        return (
+            "could not authenticate" in msg
+            or "invalid token" in msg
+            or "token is expired" in msg
+        )
 
     @property
     def api(self) -> fyersModel.FyersModel:
@@ -135,6 +201,23 @@ class Fyers:
         except Exception:
             return False
 
+    def _verify_token_safe(self, token: str) -> bool:
+        """Verify token with retries to handle transient network errors."""
+        for attempt in range(1, self.AUTH_VERIFY_RETRIES + 1):
+            try:
+                m = self._build_model(token)
+                resp = m.get_profile()
+                if resp.get("s") == "ok":
+                    return True
+                # Definitive rejection — no point retrying
+                if self._is_auth_error(resp):
+                    return False
+            except Exception:
+                pass
+            if attempt < self.AUTH_VERIFY_RETRIES:
+                sleep(2 * attempt)
+        return False
+
     def _build_model(self, token: str) -> fyersModel.FyersModel:
         return fyersModel.FyersModel(
             client_id=self.CLIENT_ID,
@@ -145,6 +228,24 @@ class Fyers:
 
     # ── full TOTP login ────────────────────────────────────────────────────────
 
+    def _authenticate_with_retry(self) -> fyersModel.FyersModel:
+        """Run TOTP-based login with retries and exponential backoff."""
+        last_err: Exception | None = None
+        for attempt in range(1, self.AUTH_MAX_RETRIES + 1):
+            try:
+                model = self._authenticate()
+                return model
+            except Exception as e:
+                last_err = e
+                if attempt < self.AUTH_MAX_RETRIES:
+                    wait = self.AUTH_RETRY_BASE_WAIT * (2 ** (attempt - 1))
+                    # Cap backoff at 120 seconds
+                    wait = min(wait, 120)
+                    sleep(wait)
+        raise RuntimeError(
+            f"Authentication failed after {self.AUTH_MAX_RETRIES} attempts: {last_err}"
+        )
+
     def _authenticate(self) -> fyersModel.FyersModel:
         url_otp    = f"{self.BASE_URL}/send_login_otp"
         url_verify = f"{self.BASE_URL}/verify_otp"
@@ -152,23 +253,30 @@ class Fyers:
         url_token  = f"{self.BASE_URL_2}/token"
 
         # 1. send OTP
-        r1 = requests.post(url_otp, json={"fy_id": self.FY_ID, "app_id": self.APP_ID}).json()
+        r1 = requests.post(url_otp, json={"fy_id": self.FY_ID, "app_id": self.APP_ID}, timeout=30).json()
+        if "request_key" not in r1:
+            raise RuntimeError(f"send_login_otp failed: {r1}")
         rk = r1["request_key"]
 
-        # 2. TOTP
-        if datetime.now().second % 30 > 27:
-            sleep(5)
+        # 2. TOTP — wait out the TOTP window edge to prevent stale codes
+        sec = datetime.now().second % 30
+        if sec > 25 or sec < 2:
+            sleep(max(30 - sec, 3))
         totp = pyotp.TOTP(self.TOTP_KEY).now()
 
         # 3. verify OTP
-        r2 = requests.post(url_verify, json={"request_key": rk, "otp": totp}).json()
+        r2 = requests.post(url_verify, json={"request_key": rk, "otp": totp}, timeout=30).json()
+        if "request_key" not in r2:
+            raise RuntimeError(f"verify_otp failed: {r2}")
         rk = r2["request_key"]
 
         # 4. verify PIN
         ses = requests.Session()
         r3 = ses.post(url_pin, json={
             "request_key": rk, "identity_type": "pin", "identifier": self.PIN
-        }).json()
+        }, timeout=30).json()
+        if not r3.get("data", {}).get("access_token"):
+            raise RuntimeError(f"verify_pin failed: {r3}")
         ses.headers.update({"authorization": f"Bearer {r3['data']['access_token']}"})
 
         # 5. authorization code
@@ -178,11 +286,17 @@ class Fyers:
             "code_challenge": "", "state": self.STATE, "scope": "",
             "nonce": "", "response_type": self.RESPONSE_TYPE, "create_cookie": True,
         }
-        r4 = ses.post(url_token, json=payload).json()
+        r4 = ses.post(url_token, json=payload, timeout=30).json()
         if "Url" in r4:
-            auth_code = parse_qs(urlparse(r4["Url"]).query)["auth_code"][0]
-        else:
+            parsed_url = urlparse(r4["Url"])
+            qs = parse_qs(parsed_url.query)
+            if "auth_code" not in qs:
+                raise RuntimeError(f"No auth_code in redirect URL: {r4['Url']}")
+            auth_code = qs["auth_code"][0]
+        elif r4.get("data", {}).get("auth"):
             auth_code = r4["data"]["auth"]
+        else:
+            raise RuntimeError(f"Token exchange failed — no auth_code: {r4}")
 
         # 6. final token
         session = fyersModel.SessionModel(
@@ -198,6 +312,29 @@ class Fyers:
         token = resp["access_token"]
         self._save_token(token)
         return self._build_model(token)
+
+    def safe_api_call(self, api_method, *args, **kwargs):
+        """
+        Call a Fyers API method, automatically re-authenticating on auth errors.
+
+        Usage:  resp = fyers_obj.safe_api_call(fyers_obj.api.quotes, data={...})
+
+        If the response indicates an authentication failure, does a full
+        re-auth cycle and retries the call once.  This handles mid-day
+        token invalidation (Fyers single-session policy, server-side
+        expiry, etc.) without the caller needing to know about auth.
+        """
+        resp = api_method(*args, **kwargs)
+        if self._is_auth_error(resp):
+            try:
+                self.re_authenticate()
+            except Exception:
+                return resp
+            # Re-resolve the method through the new model — the original
+            # api_method is a bound method on the OLD (now-invalid) model.
+            new_method = getattr(self.api, api_method.__name__)
+            resp = new_method(*args, **kwargs)
+        return resp
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  TRADING                                                                 ║
@@ -283,6 +420,21 @@ class Fyers:
     # ╔══════════════════════════════════════════════════════════════════════════╗
     # ║  OPTION-PAIR SCANNER  (ported from app_fyers_strategy.fetch_option_data) ║
     # ╚══════════════════════════════════════════════════════════════════════════╝
+
+    def _count_available_candles(
+        self,
+        symbol: str,
+        market_type: str = "INDEX",
+    ) -> int:
+        """Return how many 1-minute candles Fyers has for *symbol* (0 on error)."""
+        try:
+            df = self.fetch_historical_data(
+                symbol, timeframe="1", candles=500,
+                market_type=market_type,
+            )
+            return len(df)
+        except Exception:
+            return 0
 
     def fetch_option_pair(
         self,
@@ -383,7 +535,7 @@ class Fyers:
         for attempt in range(1, max_retries + 1):
             try:
                 # ─── 1. Get underlying price ──────────────────────────────
-                quote = self.api.quotes(data={"symbols": symbol})
+                quote = self.safe_api_call(self.api.quotes, data={"symbols": symbol})
                 if not isinstance(quote, dict) or quote.get("s") != "ok" or "d" not in quote:
                     err_msg = quote.get("message", quote.get("s", "unknown")) if isinstance(quote, dict) else str(quote)[:100]
                     raise ValueError(f"Quotes API error for {symbol}: {err_msg}")
@@ -393,7 +545,7 @@ class Fyers:
                 _log.append(f"price={current_price}")
 
                 # ─── 2. Base option chain (expiry list + VIX) ─────────────
-                base_chain = self.api.optionchain(data={"symbol": symbol, "strikecount": 20})
+                base_chain = self.safe_api_call(self.api.optionchain, data={"symbol": symbol, "strikecount": 20})
                 if not isinstance(base_chain, dict) or base_chain.get("s") != "ok":
                     err_msg = base_chain.get("message", base_chain.get("s", "unknown")) if isinstance(base_chain, dict) else str(base_chain)[:100]
                     raise ValueError(f"OptionChain API error for {symbol}: {err_msg}")
@@ -421,9 +573,8 @@ class Fyers:
                     ] or parsed
                 _log.append(f"expiries_filtered={len(expiry_list)}")
 
-                best_ce_score, best_pe_score = -1.0, -1.0
-                best_ce, best_pe = None, None
-                best_exp_info = None
+                ce_candidates = []  # [(score, row_dict, (exp_date, dte, vix))]
+                pe_candidates = []
 
                 # ─── 3. Loop through each expiry ─────────────────────────
                 for exp_date, exp_epoch in expiry_list:
@@ -432,7 +583,7 @@ class Fyers:
                         _log.append(f"skip_exp={exp_date.strftime('%d%b')} dte={dte}<{min_days_to_expiry}")
                         continue
 
-                    oc = self.api.optionchain(data={
+                    oc = self.safe_api_call(self.api.optionchain, data={
                         "symbol": symbol, "strikecount": 20,
                         "timestamp": str(exp_epoch),
                     })
@@ -454,13 +605,19 @@ class Fyers:
                     rows_before = len(df)
                     _ltp_floor = 1 if asset_type == "COMMODITY" else 5
                     _vol_floor = 10 if asset_type == "COMMODITY" else 100
-                    df = df[(df["ltp"] <= max_premium_per_lot) & (df["ltp"] > _ltp_floor)]
-                    df = df[(df["oi"] >= min_oi_threshold) | (df["volume"] > _vol_floor)]
-                    if df.empty:
-                        _log.append(f"exp={exp_date.strftime('%d%b')} rows={rows_before}->0(filtered)")
-                        continue
-
-                    _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}")
+                    df_strict = df[(df["ltp"] <= max_premium_per_lot) & (df["ltp"] > _ltp_floor)]
+                    df_strict = df_strict[(df_strict["oi"] >= min_oi_threshold) | (df_strict["volume"] > _vol_floor)]
+                    if not df_strict.empty:
+                        df = df_strict
+                        _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}")
+                    else:
+                        # Relaxed fallback: only require positive LTP so we
+                        # always have candidates for a CE/PE pair.
+                        df = df[df["ltp"] > 0]
+                        if df.empty:
+                            _log.append(f"exp={exp_date.strftime('%d%b')} rows={rows_before}->0(all_filtered)")
+                            continue
+                        _log.append(f"exp={exp_date.strftime('%d%b')} dte={dte} rows={len(df)}(relaxed)")
 
                     # ─── 4. Score CE and PE separately ────────────────────
                     # Scoring is optimised for a BUY-only strategy:
@@ -500,49 +657,75 @@ class Fyers:
                             + price_momentum * 0.10
                             + _normalize(np.log1p(sub["volume"])) * 0.10
                         ).clip(0, 1)
-                        idx = sub["score"].idxmax()
-                        sc = sub.loc[idx, "score"]
-                        _log.append(f"  {otype}: best={sc:.3f} sym={sub.loc[idx, 'symbol']} strike={sub.loc[idx, 'strike_price']}")
-                        if otype == "CE" and sc > best_ce_score:
-                            best_ce_score = sc
-                            best_ce = sub.loc[idx]
-                            best_exp_info = (exp_date, dte, vix)
-                        elif otype == "PE" and sc > best_pe_score:
-                            best_pe_score = sc
-                            best_pe = sub.loc[idx]
-                            if best_exp_info is None:
-                                best_exp_info = (exp_date, dte, vix)
+                        # Collect top 3 candidates per expiry per side
+                        top_n = sub.nlargest(3, "score")
+                        best_idx = top_n.index[0]
+                        _log.append(f"  {otype}: best={sub.loc[best_idx, 'score']:.3f} sym={sub.loc[best_idx, 'symbol']} strike={sub.loc[best_idx, 'strike_price']}")
+                        for ri in top_n.index:
+                            cand = (
+                                float(sub.loc[ri, "score"]),
+                                sub.loc[ri].to_dict(),
+                                (exp_date, dte, vix),
+                            )
+                            if otype == "CE":
+                                ce_candidates.append(cand)
+                            else:
+                                pe_candidates.append(cand)
 
-                # ─── 5. Final decision ────────────────────────────────────
-                combined = (
-                    (best_ce_score + best_pe_score) / 2
-                    if best_ce is not None and best_pe is not None
-                    else max(best_ce_score, best_pe_score)
-                )
+                # ─── 5. Final decision — validate candle data ─────────────
+                ce_candidates.sort(key=lambda x: x[0], reverse=True)
+                pe_candidates.sort(key=lambda x: x[0], reverse=True)
+
+                if not ce_candidates or not pe_candidates:
+                    missing = "CE" if not ce_candidates else "PE"
+                    msg = f"No {missing} candidates found across all expiries"
+                    return {"Recommended": False, "Symbol": symbol,
+                            "Message": msg, "Debug": " | ".join(_log)}
+
+                # Pick the first candidate per side that has enough
+                # 1-minute candle history for SHA + RSI to process.
+                # Fall back to the best-scored candidate if none pass.
+                selected_ce = None
+                for sc, row, exp in ce_candidates[:5]:
+                    count = self._count_available_candles(
+                        row["symbol"], market_type=asset_type,
+                    )
+                    _log.append(f"CE_candle_check: {row['symbol']} candles={count}")
+                    if count >= MIN_CANDLES_FOR_ANALYSIS:
+                        selected_ce = (sc, row, exp)
+                        break
+                if selected_ce is None:
+                    selected_ce = ce_candidates[0]
+                    _log.append("CE_fallback: using best-scored (low candle data)")
+
+                selected_pe = None
+                for sc, row, exp in pe_candidates[:5]:
+                    count = self._count_available_candles(
+                        row["symbol"], market_type=asset_type,
+                    )
+                    _log.append(f"PE_candle_check: {row['symbol']} candles={count}")
+                    if count >= MIN_CANDLES_FOR_ANALYSIS:
+                        selected_pe = (sc, row, exp)
+                        break
+                if selected_pe is None:
+                    selected_pe = pe_candidates[0]
+                    _log.append("PE_fallback: using best-scored (low candle data)")
+
+                ce_sc, ce_row, ce_exp = selected_ce
+                pe_sc, pe_row, pe_exp = selected_pe
+                combined = (ce_sc + pe_sc) / 2
                 _log.append(f"combined={combined:.3f} threshold={min_trend_score}")
 
-                if combined < min_trend_score or (best_ce is None and best_pe is None):
-                    msg = f"No suitable options (CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"
-                    return {"Recommended": False, "Symbol": symbol,
-                            "Message": msg, "Debug": " | ".join(_log)}
-
-                # BOTH CE and PE must be found for a valid pair
-                if best_ce is None or best_pe is None:
-                    missing = "CE" if best_ce is None else "PE"
-                    msg = f"Only one side found ({missing} missing, CE={best_ce_score:.3f}, PE={best_pe_score:.3f})"
-                    return {"Recommended": False, "Symbol": symbol,
-                            "Message": msg, "Debug": " | ".join(_log)}
-
-                exp_date, dte, vix = best_exp_info
-                _log.append(f"SELECTED CE={best_ce['symbol']} PE={best_pe['symbol']}")
+                exp_date, dte, vix = ce_exp
+                _log.append(f"SELECTED CE={ce_row['symbol']} PE={pe_row['symbol']}")
                 return {
                     "Recommended": True,
-                    "CE_Symbol": best_ce["symbol"],
-                    "PE_Symbol": best_pe["symbol"],
-                    "CE_Strike": float(best_ce["strike_price"]),
-                    "PE_Strike": float(best_pe["strike_price"]),
-                    "CE_Premium": float(best_ce["ltp"]),
-                    "PE_Premium": float(best_pe["ltp"]),
+                    "CE_Symbol": ce_row["symbol"],
+                    "PE_Symbol": pe_row["symbol"],
+                    "CE_Strike": float(ce_row["strike_price"]),
+                    "PE_Strike": float(pe_row["strike_price"]),
+                    "CE_Premium": float(ce_row["ltp"]),
+                    "PE_Premium": float(pe_row["ltp"]),
                     "Expiry": exp_date.strftime("%Y-%m-%d"),
                     "Days_To_Expiry": dte,
                     "Trend_Score": float(combined),
@@ -573,16 +756,42 @@ class Fyers:
     @staticmethod
     def resolve_commodity_symbol(generic_name: str, mcx_df: pd.DataFrame) -> str | None:
         """
-        Resolve a generic commodity name (e.g. 'SILVER') to the nearest
-        active MCX futures symbol (e.g. 'MCX:SILVERM25FEBFUT').
+        Resolve a generic commodity name (e.g. 'SILVERM') to the nearest
+        active (non-expired) MCX futures symbol (e.g. 'MCX:SILVERM26APRFUT').
         """
-        matches = mcx_df[
-            mcx_df["Symbol ticker"].str.contains(generic_name.upper(), case=False, na=False)
-        ]
-        futures = matches[matches["Symbol ticker"].str.contains("FUT", case=False, na=False)]
+        # Use 'Underlying symbol' column for exact match to avoid SILVER
+        # matching SILVERM, SILVERMIC, etc.
+        name_upper = generic_name.upper()
+        futures = mcx_df[
+            (mcx_df["Underlying symbol"].str.upper() == name_upper)
+            & mcx_df["Symbol ticker"].str.contains("FUT", case=False, na=False)
+        ].copy()
+
+        print(f"[DEBUG resolve_commodity] generic_name={generic_name!r}, "
+              f"matched_futures={len(futures)} rows")
+        if not futures.empty:
+            print(f"[DEBUG resolve_commodity] tickers: "
+                  f"{futures['Symbol ticker'].tolist()}")
+
         if futures.empty:
+            print(f"[DEBUG resolve_commodity] No futures found for {name_upper}. "
+                  f"Available underlying symbols: "
+                  f"{mcx_df['Underlying symbol'].dropna().unique()[:20].tolist()}")
             return None
-        return futures.iloc[0]["Symbol ticker"]
+
+        # Pick the nearest non-expired contract by expiry date
+        # Expiry date in the MCX CSV is an epoch timestamp (int), so
+        # compare with today's epoch — NOT a date string.
+        today_epoch = int(datetime.now().timestamp())
+        futures = futures[pd.to_numeric(futures["Expiry date"], errors="coerce") >= today_epoch]
+        if futures.empty:
+            print(f"[DEBUG resolve_commodity] All {name_upper} futures expired")
+            return None
+
+        futures = futures.sort_values("Expiry date")
+        chosen = futures.iloc[0]["Symbol ticker"]
+        print(f"[DEBUG resolve_commodity] Chosen: {chosen}")
+        return chosen
 
     @staticmethod
     def has_index_positions(position_df: pd.DataFrame) -> bool:
@@ -944,7 +1153,8 @@ class Fyers:
             "cont_flag": "0" if is_option else "1",
         }
 
-        resp = self.api.history(data=payload)
+        resp = self.safe_api_call(self.api.history, data=payload)
+
         response_status = resp.get("s") if resp else None
 
         if not resp or response_status not in ("ok", "no_data"):
@@ -963,4 +1173,29 @@ class Fyers:
             columns=["Timestamp", "Open", "High", "Low", "Close", "Volume"],
         )
         df["Timestamp"] = pd.to_datetime(df["Timestamp"], unit="s")
+
+        # ── Data quality: sort ascending + deduplicate ────────────────
+        # The Fyers API normally returns candles in ascending order, but
+        # edge cases (rate limits, server glitches) can produce out-of-order
+        # or duplicate entries.  Both SHA (Heiken-Ashi recursive) and RSI
+        # (diff-based) are extremely sensitive to ordering — reversed data
+        # causes SHA candle directions to invert and RSI to be off by 60+
+        # points.  Defensive sort + dedup prevents this.
+        was_unsorted = not df["Timestamp"].is_monotonic_increasing
+        n_before = len(df)
+        df = df.sort_values("Timestamp").drop_duplicates(
+            subset="Timestamp", keep="last"
+        ).reset_index(drop=True)
+        n_dupes = n_before - len(df)
+
+        # Attach diagnostics so callers can log data quality issues
+        df.attrs["_data_quality"] = {
+            "symbol": symbol,
+            "timeframe": timeframe,
+            "was_unsorted": was_unsorted,
+            "duplicates_removed": n_dupes,
+            "candles_returned": len(df),
+            "candles_requested": candles,
+        }
+
         return df
