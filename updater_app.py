@@ -122,63 +122,47 @@ def _load_json(path: Path) -> dict:
 
 def load_fyers_session(fyers: Fyers, force: bool = False) -> bool:
     """
-    Load the Fyers token — prefer the shared file from dev_scanner,
-    but fall back to full TOTP re-auth if the token is missing,
-    expired, or invalid.
-Anti-collision: when multiple updater processes detect an expired
-    token simultaneously, a random jitter prevents them all from doing
-    TOTP login at once (Fyers single-session policy would cause each
-    login to invalidate the previous one).  After the jitter, the file
-    is re-read — if a peer already refreshed the token, we use that.
+    Load the Fyers token from the shared file written by dev_scanner.
+
+    Updaters are strictly read-only — they NEVER perform TOTP login.
+    Multiple processes doing TOTP simultaneously would invalidate each
+    other's tokens (Fyers single-session policy), causing a cascade
+    of auth failures across all branches.
+
+    Anti-collision jitter staggers file reads so that if the scanner is
+    mid-write, updaters retry after a short randomized delay.
 
     Returns True if session is ready, False otherwise.
     """
     try:
-        # First try read-only (reuse scanner's token)
+        # Try loading scanner's token from file
         fyers.ensure_session(force=force, read_only=True)
         return True
     except Exception:
         pass
 
     # ── Anti-collision jitter ──────────────────────────────────────────
-    # Multiple updaters may detect the expired token within the same
-    # 3-second cycle.  A random wait (2–15 s) staggers them so that
-    # the fastest one authenticates and writes the new token to the
-    # shared file; the others simply pick it up.
-    jitter = random.uniform(2, 15)
+    # Scanner may be mid-write.  A short random wait (2–10 s) gives it
+    # time to finish, and staggers multiple updaters.
+    jitter = random.uniform(2, 10)
     log_strategy_event(
-        "SYSTEM", "AUTH", "SELF_AUTH_WAIT",
-        details=f"Token unavailable — waiting {jitter:.1f}s before self-auth (anti-collision)",
+        "SYSTEM", "AUTH", "TOKEN_WAIT",
+        details=f"Token unavailable — waiting {jitter:.1f}s for scanner to write",
     )
     sleep(jitter)
 
-    # Re-read file — another updater (or scanner) may have refreshed it
+    # Re-read file — scanner (or peer updater reload) may have refreshed it
     try:
         fyers.ensure_session(force=True, read_only=True)
         log_strategy_event(
-            "SYSTEM", "AUTH", "TOKEN_REFRESHED_BY_PEER",
-            details="Another process refreshed the token — loaded from file",
-        )
-        return True
-    except Exception:
-        pass
-
-    # Still no valid token — do full self-auth
-    try:
-        log_strategy_event(
-            "SYSTEM", "AUTH", "SELF_AUTH_START",
-            details="No peer refreshed token — attempting self-auth",
-        )
-        fyers.ensure_session(force=True, read_only=False)
-        log_strategy_event(
-            "SYSTEM", "AUTH", "SELF_AUTH_OK",
-            details="Self-auth succeeded — updater authenticated independently",
+            "SYSTEM", "AUTH", "TOKEN_LOADED_AFTER_WAIT",
+            details="Token loaded from shared file after wait",
         )
         return True
     except Exception as e:
         log_strategy_event(
-            "SYSTEM", "AUTH", "SELF_AUTH_FAIL",
-            details=f"Self-auth also failed: {str(e)[:120]}",
+            "SYSTEM", "AUTH", "TOKEN_LOAD_FAIL",
+            details=f"No valid token in shared file: {str(e)[:120]}",
         )
         return False
 
@@ -186,7 +170,7 @@ Anti-collision: when multiple updater processes detect an expired
 def verify_and_refresh_token(fyers: Fyers) -> bool:
     """
     Verify the current token is still valid.  If expired/invalid,
-    try reloading from file first, then fall back to full re-auth.
+    reload from the shared token file (read-only — no TOTP).
 
     Call this periodically (e.g. each cycle) to catch mid-day
     token invalidation (Fyers single-session policy, server-side
@@ -202,10 +186,10 @@ def verify_and_refresh_token(fyers: Fyers) -> bool:
     except Exception:
         pass
 
-    # Token appears dead — try reload + self-auth
+    # Token appears dead — try reloading from shared file
     log_strategy_event(
         "SYSTEM", "AUTH", "TOKEN_EXPIRED_MID_SESSION",
-        details="Token expired or invalidated — attempting refresh",
+        details="Token expired or invalidated — reloading from file",
     )
     fyers.invalidate_session()
     return load_fyers_session(fyers, force=True)
@@ -617,8 +601,13 @@ def main():
 
     # ── Fyers client ───────────────────────────────────────────────────────
     fyers: Fyers = DemoFyers() if mode == "demo" else Fyers()
+    # Updaters must NEVER do TOTP login — only the scanner should.
+    # Multiple processes doing TOTP simultaneously invalidates each other's
+    # tokens (Fyers single-session policy).  read_only_auth ensures this
+    # instance only ever loads tokens from the shared file.
+    fyers._read_only_auth = True
 
-    # ── Load token (written by dev_scanner) ────────────────────────────────
+    # ── Load token (from scanner's shared file) ────────────────────────────
     current_day = date.today()
     session_ok = load_fyers_session(fyers, force=False)
 
