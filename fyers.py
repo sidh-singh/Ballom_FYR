@@ -59,6 +59,7 @@ class Fyers:
     def __init__(self) -> None:
         self._api: fyersModel.FyersModel | None = None
         self._token_date: date | None = None  # date the current token was issued
+        self._read_only_auth: bool = False  # when True, never do TOTP login
 
         self._buy_tpl = PlaceOrder(
             symbol="", qty=0, type=2, side=Transaction.BUY.value,
@@ -137,8 +138,14 @@ class Fyers:
         Use this when API calls fail mid-day with auth errors — the
         existing token may have been invalidated server-side (Fyers
         single-session policy, daily token rotation, etc.).
+
+        In read-only auth mode (updaters), only reloads from the shared
+        token file instead of doing TOTP login — prevents multiple
+        processes from invalidating each other's tokens.
         """
         self.invalidate_session()
+        if self._read_only_auth:
+            return self.ensure_session(force=True, read_only=True)
         self._api = self._authenticate_with_retry()
         self._token_date = date.today()
         return self._api
@@ -319,8 +326,14 @@ class Fyers:
         """
         resp = api_method(*args, **kwargs)
         if self._is_auth_error(resp):
-            self.re_authenticate()
-            resp = api_method(*args, **kwargs)
+            try:
+                self.re_authenticate()
+            except Exception:
+                return resp
+            # Re-resolve the method through the new model — the original
+            # api_method is a bound method on the OLD (now-invalid) model.
+            new_method = getattr(self.api, api_method.__name__)
+            resp = new_method(*args, **kwargs)
         return resp
 
     # ╔══════════════════════════════════════════════════════════════════════════╗
